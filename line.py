@@ -824,16 +824,6 @@ def main():
                             rack_dims[rack_name] = r_dim
                             levels = st.multiselect(f"Available Levels for {rack_name}",
                                 options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D','E'], key=f"levels_{rack_name}")
-                        
-                        with col2:
-                            st.markdown(f"**Bin Capacity Per Level for {rack_name}**")
-                            rack_bin_counts = {}
-                            for container in unique_containers:
-                                b_count = st.number_input(f"Capacity of '{container}' Bins", min_value=0, value=0, step=1, key=f"bcount_{rack_name}_{container}")
-                                if b_count > 0: rack_bin_counts[container] = b_count
-                        
-                        rack_configs[rack_name] = {'dimensions': r_dim, 'levels': levels, 'rack_bin_counts': rack_bin_counts}
-                        st.markdown("---")
 
                 if st.button("🚀 Generate PDF", type="primary"):
                     missing_bin_dims = [name for name, dim in bin_dims.items() if not dim]
