@@ -13,7 +13,7 @@ from reportlab.lib.enums import TA_LEFT
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Station-Wise Label Generator",
+    page_title="AgiloSmartTag Studio",
     page_icon="🏷️",
     layout="wide"
 )
@@ -206,8 +206,8 @@ def generate_labels_from_excel(df, progress_bar=None):
 
 # --- Main Application UI ---
 def main():
-    st.title("🏷️ Station-Wise Label Generator")
-    st.markdown("<p style='font-style:italic;'>Rack numbers reset for every station</p>", unsafe_allow_html=True)
+    st.title("🏷️ AgiloSmartTag Studio")
+    st.markdown("<p style='font-style:italic;'>Designed and Developed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
     st.markdown("---")
 
     st.sidebar.title("📄 Configuration")
