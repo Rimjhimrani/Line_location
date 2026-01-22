@@ -32,6 +32,9 @@ rl_header_style = ParagraphStyle(name='RLHeader', fontName='Helvetica-Bold', fon
 rl_cell_left_style = ParagraphStyle(name='RLCellLeft', fontName='Helvetica', fontSize=10, alignment=TA_LEFT)
 location_header_style = ParagraphStyle(name='LocHeader', fontName='Helvetica', fontSize=16, alignment=TA_CENTER)
 
+# FIX: Added specific style for "Designed by" to resolve TA_RIGHT error
+designed_by_style = ParagraphStyle(name='DesignedBy', fontName='Helvetica', fontSize=10, alignment=TA_RIGHT)
+
 # --- HELPER FUNCTIONS ---
 
 def parse_dimensions(dim_str):
@@ -130,7 +133,7 @@ def automate_station_assignment(df, base_rack_id, levels, cells_per_level, bin_i
             
     return pd.DataFrame(final_data)
 
-# --- BIN LABEL GENERATION (EXACTLY YOUR FORMAT) ---
+# --- BIN LABEL GENERATION ---
 
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     if not QR_AVAILABLE:
@@ -253,10 +256,10 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         p_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1, colors.black), ('BACKGROUND', (0,0),(-1,0), colors.HexColor("#F4B084")), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
         elements.append(p_table)
         
-        # FOOTER
+        # FOOTER - FIX: Using proper Style object instead of integer TA_RIGHT
         left_content = [Paragraph(f"<i>Creation Date: {datetime.date.today().strftime('%d-%m-%Y')}</i>", rl_cell_left_style),
                         Paragraph("<b>Verified by:</b>", rl_header_style), Paragraph("Name: ________________", rl_cell_left_style)]
-        footer_table = Table([[left_content, Paragraph("Designed by Agilomatrix", TA_RIGHT)]], colWidths=[20*cm, 7.7*cm])
+        footer_table = Table([[left_content, Paragraph("Designed by Agilomatrix", designed_by_style)]], colWidths=[20*cm, 7.7*cm])
         elements.append(footer_table)
         elements.append(PageBreak())
         
@@ -318,8 +321,8 @@ def main():
         if cols['Station No'] and cols['Container']:
             st.sidebar.markdown("---")
             st.sidebar.subheader("Rack Geometry")
-            cell_dim = st.sidebar.text_input("Global Cell Dimensions (L x W)", "800x400")
-            lvls = st.sidebar.multiselect("Active Levels", ['A','B','C','D','E','F','G','H'], ['A','B','C','D'])
+            cell_dim = st.sidebar.text_input("Cell Dimensions (L x W)", "800x400")
+            lvls = st.sidebar.multiselect("Levels", ['A','B','C','D','E','F','G','H'], ['A','B','C','D'])
             c_per_l = st.sidebar.number_input("Physical Cells per Level", 1, 50, 10)
             
             u_conts = sorted(df[cols['Container']].dropna().unique())
@@ -340,7 +343,7 @@ def main():
                     buf, summ = generate_bin_labels(df_assigned, mtm_models, prog, status)
                 else:
                     buf, count = generate_rack_list_pdf(df_assigned, base_id, top_logo, 4, 1.5, "", prog, status)
-                    summ = {"Total Racks": count}
+                    summ = {"Total Station Racks": count}
 
                 st.download_button("📥 Download PDF", buf.getvalue(), f"{out_type}.pdf", "application/pdf")
                 st.table(pd.DataFrame(list(summ.items()), columns=['Rack / Station', 'Count']))
