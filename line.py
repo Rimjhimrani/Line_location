@@ -139,7 +139,7 @@ def automate_station_assignment(df, base_rack_id, levels, cells_per_level, bin_i
 # --- BIN LABEL GENERATION (10x15cm STICKER FORMAT) ---
 
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
-     if not QR_AVAILABLE:
+    if not QR_AVAILABLE:
         st.error("❌ QR Code library not found. Please install `qrcode` and `Pillow`.")
         return None, {}
 
