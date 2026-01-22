@@ -84,7 +84,6 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
     
     final_df_parts = []
     
-    # Flatten available cells from all dynamically generated racks
     available_cells = []
     for rack_name, config in sorted(rack_configs.items()):
         rack_num_val = ''.join(filter(str.isdigit, rack_name))
@@ -99,13 +98,12 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
     current_cell_index = 0
     last_processed_station = "N/A"
 
-    # Group by Station, then sort containers by area (Largest containers first)
     for station_no, station_group in df_processed.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Processing station: {station_no}...")
         last_processed_station = station_no
         
-        # Sort groups by area descending
         parts_grouped_by_container = station_group.groupby('Container')
+        # Place larger bins at the beginning of the assignment
         sorted_groups = sorted(parts_grouped_by_container, key=lambda x: x[1]['bin_area'].iloc[0], reverse=True)
 
         for container_type, group_df in sorted_groups:
@@ -125,7 +123,6 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
                     final_df_parts.append(part)
                 current_cell_index += 1
             
-    # Fill remaining empty cells in the last rack with "EMPTY" labels
     for i in range(current_cell_index, len(available_cells)):
         empty_part = {'Part No': 'EMPTY', 'Description': '', 'Bus Model': '', 'Station No': last_processed_station, 'Container': ''}
         empty_part.update(available_cells[i])
@@ -215,6 +212,10 @@ def main():
         if container_col and station_col:
             st.sidebar.markdown("---")
             st.sidebar.subheader("Rack Geometry")
+            
+            # RESTORED: Cell Dimensions input
+            cell_dim_input = st.sidebar.text_input("Cell Dimensions (L x W)", placeholder="e.g. 800x400")
+            
             levels = st.sidebar.multiselect("Active Levels per Rack", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
             num_cells_per_level = st.sidebar.number_input("Physical Cells per Level", min_value=1, value=10)
             
@@ -224,7 +225,6 @@ def main():
             st.sidebar.subheader("Container (Bin) Rules")
             for container in unique_containers:
                 st.sidebar.markdown(f"**{container}**")
-                # ADDED: Dimension input back
                 dim = st.sidebar.text_input(f"Dimensions (L x W)", key=f"dim_{container}", placeholder="e.g. 600x400")
                 capacity = st.sidebar.number_input("Parts per Physical Cell", min_value=1, value=1, key=f"cap_{container}")
                 bin_info_map[container] = {
@@ -249,9 +249,7 @@ def main():
 
                 rack_configs = {f"Rack {i+1:02d}": {'levels': levels, 'cells_per_level': num_cells_per_level} for i in range(num_racks_needed)}
 
-                # Step 1: Assign parts (now using dimensions for sorting)
                 df_assigned = automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, status_text)
-                # Step 2: Sequential IDs
                 df_final = assign_sequential_location_ids(df_assigned)
                 
                 if not df_final.empty:
