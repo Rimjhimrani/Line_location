@@ -47,6 +47,10 @@ def format_part_no_v2(part_no):
         return Paragraph(f"<b><font size=34>{part1}</font><font size=40>{part2}</font></b>", bold_style_v2)
     return Paragraph(f"<b><font size=34>{part_no}</font></b>", bold_style_v2)
 
+def format_description(desc):
+    if not desc or not isinstance(desc, str): desc = str(desc)
+    return Paragraph(desc, desc_style)
+
 def generate_qr_code_image(data_string):
     if not QR_AVAILABLE: return None
     qr = qrcode.QRCode(version=1, box_size=10, border=1)
@@ -76,7 +80,7 @@ def extract_location_values(row):
 def extract_store_location_data_from_excel(row):
     return [str(row.get(c, '')) for c in ['Storage', 'Area', 'Zone', 'Row', 'Rack_S', 'Level_S', 'Bin_S']]
 
-# --- DYNAMIC ASSIGNMENT LOGIC (STATION-WISE RESET) ---
+# --- DYNAMIC ASSIGNMENT LOGIC ---
 
 def automate_station_assignment(df, base_rack_id, levels, cells_per_level, bin_info_map, status_text=None):
     cols = find_required_columns(df)
@@ -89,7 +93,7 @@ def automate_station_assignment(df, base_rack_id, levels, cells_per_level, bin_i
     
     final_data = []
     for st_no, st_group in df_p.groupby('Station No', sort=True):
-        if status_text: status_text.text(f"Calculating for Station: {st_no}")
+        if status_text: status_text.text(f"Processing Station: {st_no}")
         
         container_groups = sorted(st_group.groupby('Container'), key=lambda x: x[1]['bin_area'].iloc[0], reverse=True)
         total_cells_needed = 0
@@ -126,11 +130,11 @@ def automate_station_assignment(df, base_rack_id, levels, cells_per_level, bin_i
             
     return pd.DataFrame(final_data)
 
-# --- EXACT PDF GENERATION FUNCTIONS (UNALTERED FORMAT) ---
+# --- BIN LABEL GENERATION (EXACTLY YOUR FORMAT) ---
 
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     if not QR_AVAILABLE:
-        st.error("❌ QR Code library not found. Please install `qrcode` and `Pillow`.")
+        st.error("❌ QR Code library not found.")
         return None, {}
 
     STICKER_WIDTH, STICKER_HEIGHT = 10 * cm, 15 * cm
@@ -161,20 +165,20 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         rack_key = f"ST-{row.get('Station No', 'NA')} / Rack {row.get('Rack No 1st', '0')}{row.get('Rack No 2nd', '0')}"
         label_summary[rack_key] = label_summary.get(rack_key, 0) + 1
 
-        part_no, desc = str(row.get('Part No', '')), str(row.get('Description', ''))
-        qty_bin, qty_veh = str(row.get('Qty/Bin', '')), str(row.get('Qty/Veh', ''))
+        p_no, desc = str(row.get('Part No', '')), str(row.get('Description', ''))
+        q_bin, q_veh = str(row.get('Qty/Bin', '')), str(row.get('Qty/Veh', ''))
 
         store_loc_raw = extract_store_location_data_from_excel(row)
         line_loc_raw = extract_location_values(row)
 
-        qr_data = f"Part No: {part_no}\nDesc: {desc}\nQty/Bin: {qty_bin}\nLine Loc: {'|'.join(line_loc_raw)}"
+        qr_data = f"Part No: {p_no}\nDesc: {desc}\nQty/Bin: {q_bin}\nLine Loc: {'|'.join(line_loc_raw)}"
         qr_image = generate_qr_code_image(qr_data)
         
         content_width = CONTENT_BOX_WIDTH - 0.2*cm
         main_table = Table([
-            ["Part No", Paragraph(f"{part_no}", bin_bold_style)],
+            ["Part No", Paragraph(p_no, bin_bold_style)],
             ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)],
-            ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]
+            ["Qty/Bin", Paragraph(q_bin, bin_qty_style)]
         ], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
         main_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(0,-1), 'Helvetica'), ('FONTSIZE', (0,0),(0,-1), 11)]))
 
@@ -193,12 +197,12 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         line_loc_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
 
         if mtm_models:
-            mtm_qty_values = [Paragraph(f"<b>{qty_veh}</b>", bin_qty_style) if str(row.get('Bus Model','')).strip().upper() == m.upper() else "" for m in mtm_models]
-            mtm_table = Table([mtm_models, mtm_qty_values], colWidths=[3.6*cm/len(mtm_models)]*len(mtm_models), rowHeights=[0.75*cm, 0.75*cm])
+            mtm_qty_values = [Paragraph(f"<b>{q_veh}</b>", bin_qty_style) if str(row.get('Bus Model','')).strip().upper() == m.upper() else "" for m in mtm_models]
+            mtm_table = Table([mtm_models, mtm_qty_values], colWidths=[3.6*cm/len(mtm_models) if mtm_models else 3.6*cm]*len(mtm_models), rowHeights=[0.75*cm, 0.75*cm])
             mtm_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0),(-1,-1), 9)]))
         else: mtm_table = None
 
-        bottom_row = Table([[mtm_table or "", Spacer(1, 1*cm), qr_image or "", ""]], colWidths=[3.6*cm, 1.0*cm, 2.5*cm, content_width - 7.1*cm], rowHeights=[2.5*cm])
+        bottom_row = Table([[mtm_table or "", Spacer(1, 1*cm), qr_image or "", ""]], colWidths=[3.6*cm, 1.0*cm, 2.5*cm, content_width-7.1*cm], rowHeights=[2.5*cm])
         bottom_row.setStyle(TableStyle([('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
 
         all_elements.extend([main_table, store_loc_table, line_loc_table, Spacer(1, 0.2*cm), bottom_row])
@@ -274,7 +278,8 @@ def generate_rack_labels(df, progress_bar=None):
         label_summary[rk] = label_summary.get(rk, 0) + 1
         if i > 0 and i % 4 == 0: elements.append(PageBreak())
         
-        pt = Table([['Part No', format_part_no_v2(str(part['Part No']))], ['Description', format_description(str(part['Description']))]], colWidths=[4*cm, 11*cm], rowHeights=[1.9*cm, 2.1*cm])
+        pt = Table([['Part No', format_part_no_v2(str(part['Part No']))], 
+                    ['Description', format_description(str(part['Description']))]], colWidths=[4*cm, 11*cm], rowHeights=[1.9*cm, 2.1*cm])
         loc_v = extract_location_values(part)
         lt = Table([[Paragraph('Line Location', location_header_style)] + loc_v], colWidths=[4*cm]+[11*cm/7]*7, rowHeights=[1.2*cm])
         
@@ -289,12 +294,12 @@ def generate_rack_labels(df, progress_bar=None):
     buffer.seek(0)
     return buffer, label_summary
 
-# --- MAIN UI ---
+# --- MAIN APP ---
 
 def main():
     st.title("🏷️ AgiloSmartTag Studio")
     st.sidebar.title("📄 Configuration")
-    out_type = st.sidebar.selectbox("Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
+    out_type = st.sidebar.selectbox("Choose Output:", ["Rack Labels", "Bin Labels", "Rack List"])
     base_id = st.sidebar.text_input("Infrastructure ID", "R")
 
     top_logo = None
@@ -311,9 +316,10 @@ def main():
         df = pd.read_excel(file) if file.name.endswith('x') else pd.read_csv(file)
         cols = find_required_columns(df)
         if cols['Station No'] and cols['Container']:
+            st.sidebar.markdown("---")
             st.sidebar.subheader("Rack Geometry")
-            cell_dim = st.sidebar.text_input("Cell Dimensions (L x W)", "800x400")
-            lvls = st.sidebar.multiselect("Levels", ['A','B','C','D','E','F','G','H'], ['A','B','C','D'])
+            cell_dim = st.sidebar.text_input("Global Cell Dimensions (L x W)", "800x400")
+            lvls = st.sidebar.multiselect("Active Levels", ['A','B','C','D','E','F','G','H'], ['A','B','C','D'])
             c_per_l = st.sidebar.number_input("Physical Cells per Level", 1, 50, 10)
             
             u_conts = sorted(df[cols['Container']].dropna().unique())
