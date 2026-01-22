@@ -809,9 +809,6 @@ def main():
                         dim = st.text_input(f"Dimensions for {container}", key=f"bindim_{container}", placeholder="e.g., 300x200x150mm")
                         bin_dims[container] = dim
                     st.markdown("---")
-
-                    st.subheader("2. Rack Dimensions & Bin/Level Capacity")
-                    num_racks = st.number_input("Number of Racks (per station)", min_value=1, value=1, step=1)
                     
                     rack_configs = {}
                     rack_dims = {}
