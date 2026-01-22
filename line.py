@@ -234,8 +234,8 @@ def main():
             st.sidebar.subheader("Container Rules")
             for container in unique_containers:
                 st.sidebar.markdown(f"**{container}**")
-                dim = st.sidebar.text_input(f"Dim", key=f"d_{container}", placeholder="600x400")
-                cap = st.sidebar.number_input("Cap", min_value=1, value=1, key=f"c_{container}")
+                dim = st.sidebar.text_input(f"Dimensions", key=f"d_{container}", placeholder="600x400")
+                cap = st.sidebar.number_input("Parts per Physical Cell (Capacity)", min_value=1, value=1, key=f"c_{container}")
                 bin_info_map[container] = {'dims': parse_dimensions(dim), 'capacity': cap}
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
