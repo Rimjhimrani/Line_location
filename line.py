@@ -835,6 +835,13 @@ def main():
                 if st.button("🚀 Generate PDF", type="primary"):
                     missing_bin_dims = [name for name, dim in bin_dims.items() if not dim]
                     missing_rack_dims = [name for name, dim in rack_dims.items() if not dim]
+
+                    bin_info_map = {}
+                    for container, dim_str in bin_dims.items():
+                        w, d, h = parse_dims(r_dim)
+                        bin_info_map[container] = {
+                            'dims': (w, d)
+                        }
                     
                     error_messages = []
                     if missing_bin_dims: error_messages.append(f"container dimensions for: {', '.join(missing_bin_dims)}")
