@@ -213,7 +213,7 @@ def main():
     st.sidebar.title("📄 Configuration")
     base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
     
-    uploaded_file = st.file_uploader("Upload Station Data (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
+    uploaded_file = st.file_uploader("Upload Your Data Here (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
