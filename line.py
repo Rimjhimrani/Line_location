@@ -803,7 +803,14 @@ def main():
                     st.markdown("---")
 
                     st.subheader("2. Rack Dimensions & Bin/Level Capacity")
-                    num_racks = st.number_input("Number of Racks (per station)", min_value=1, value=1, step=1)
+                    st.markdown(f"**Bin Capacity Per Level for {rack_name}**")
+                    for container in unique_containers:
+                        b_count = st.number_input(
+                            f"Capacity of '{container}' Bins",
+                            min_value=0,
+                            value=0,
+                            step=1
+                        )
                     
                     rack_configs = {}
                     rack_dims = {}
