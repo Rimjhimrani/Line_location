@@ -77,7 +77,9 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
     }
     df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
     
+    # Calculate bin area for sorting logic (Larger bins first)
     df_processed['bin_info'] = df_processed['Container'].map(bin_info_map)
+    df_processed['bin_area'] = df_processed['bin_info'].apply(lambda x: x['dims'][0] * x['dims'][1] if x else 0)
     df_processed['bins_per_cell'] = df_processed['bin_info'].apply(lambda x: x['capacity'] if x else 1)
     
     final_df_parts = []
@@ -97,13 +99,16 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
     current_cell_index = 0
     last_processed_station = "N/A"
 
-    # Group by Station to ensure sequential layout
+    # Group by Station, then sort containers by area (Largest containers first)
     for station_no, station_group in df_processed.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Processing station: {station_no}...")
         last_processed_station = station_no
         
-        # Group by Container within the station
-        for container_type, group_df in station_group.groupby('Container'):
+        # Sort groups by area descending
+        parts_grouped_by_container = station_group.groupby('Container')
+        sorted_groups = sorted(parts_grouped_by_container, key=lambda x: x[1]['bin_area'].iloc[0], reverse=True)
+
+        for container_type, group_df in sorted_groups:
             parts_to_assign = group_df.to_dict('records')
             bins_per_cell = parts_to_assign[0]['bins_per_cell']
             if bins_per_cell <= 0: bins_per_cell = 1
@@ -120,7 +125,7 @@ def automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, s
                     final_df_parts.append(part)
                 current_cell_index += 1
             
-    # Optional: Fill remaining empty cells in the last rack with "EMPTY" labels
+    # Fill remaining empty cells in the last rack with "EMPTY" labels
     for i in range(current_cell_index, len(available_cells)):
         empty_part = {'Part No': 'EMPTY', 'Description': '', 'Bus Model': '', 'Station No': last_processed_station, 'Container': ''}
         empty_part.update(available_cells[i])
@@ -151,7 +156,7 @@ def extract_location_values(row):
     return [str(row.get(c, '')) for c in ['Bus Model', 'Station No', 'Rack', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Cell']]
 
 # --- PDF Generation Functions ---
-def generate_labels_from_excel(df, progress_bar=None, status_text=None):
+def generate_labels_from_excel(df, progress_bar=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1*cm, leftMargin=1.5*cm, rightMargin=1.5*cm)
     elements = []
@@ -167,6 +172,7 @@ def generate_labels_from_excel(df, progress_bar=None, status_text=None):
         rack_num = f"{part.get('Rack No 1st', '0')}{part.get('Rack No 2nd', '0')}"
         rack_key = f"Rack {rack_num.zfill(2)}"
         label_summary[rack_key] = label_summary.get(rack_key, 0) + 1
+        
         if label_count > 0 and label_count % 4 == 0: elements.append(PageBreak())
 
         part_table = Table([['Part No', format_part_no_v2(str(part['Part No']))], ['Description', format_description(str(part['Description']))]], colWidths=[4*cm, 11*cm], rowHeights=[1.9*cm, 2.1*cm])
@@ -204,7 +210,7 @@ def main():
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
         st.success(f"✅ File loaded! Found {len(df)} rows.")
         
-        part_no_col, _, _, station_col, container_col = find_required_columns(df)
+        _, _, _, station_col, container_col = find_required_columns(df)
         
         if container_col and station_col:
             st.sidebar.markdown("---")
@@ -218,14 +224,18 @@ def main():
             st.sidebar.subheader("Container (Bin) Rules")
             for container in unique_containers:
                 st.sidebar.markdown(f"**{container}**")
+                # ADDED: Dimension input back
+                dim = st.sidebar.text_input(f"Dimensions (L x W)", key=f"dim_{container}", placeholder="e.g. 600x400")
                 capacity = st.sidebar.number_input("Parts per Physical Cell", min_value=1, value=1, key=f"cap_{container}")
-                bin_info_map[container] = {'capacity': capacity}
+                bin_info_map[container] = {
+                    'dims': parse_dimensions(dim), 
+                    'capacity': capacity
+                }
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 status_text = st.empty()
                 
                 # --- AUTOMATIC RACK CALCULATION ---
-                # 1. Calculate how many physical cells are needed across all stations
                 total_cells_needed = 0
                 for _, station_group in df.groupby(station_col):
                     for _, cont_group in station_group.groupby(container_col):
@@ -235,22 +245,24 @@ def main():
                 cells_per_rack = len(levels) * num_cells_per_level
                 num_racks_needed = math.ceil(total_cells_needed / cells_per_rack)
                 
-                st.info(f"📊 Auto-calculation: Needs {total_cells_needed} cells. Generating **{num_racks_needed} racks**.")
+                st.info(f"📊 Layout Summary: {total_cells_needed} cells needed. Automatically generating **{num_racks_needed} racks**.")
 
                 rack_configs = {f"Rack {i+1:02d}": {'levels': levels, 'cells_per_level': num_cells_per_level} for i in range(num_racks_needed)}
 
-                # Step 1: Assign parts
+                # Step 1: Assign parts (now using dimensions for sorting)
                 df_assigned = automate_location_assignment(df, base_rack_id, rack_configs, bin_info_map, status_text)
                 # Step 2: Sequential IDs
                 df_final = assign_sequential_location_ids(df_assigned)
                 
                 if not df_final.empty:
-                    pdf_buffer, label_summary = generate_labels_from_excel(df_final)
-                    st.download_button(label="📥 Download PDF", data=pdf_buffer.getvalue(), file_name="Rack_Labels.pdf", mime="application/pdf")
+                    progress_bar = st.progress(0)
+                    pdf_buffer, label_summary = generate_labels_from_excel(df_final, progress_bar)
+                    st.download_button(label="📥 Download PDF", data=pdf_buffer.getvalue(), file_name="Auto_Rack_Labels.pdf", mime="application/pdf")
                     
-                    st.subheader("📊 Summary")
-                    summary_df = pd.DataFrame(list(label_summary.items()), columns=['Rack', 'Labels'])
+                    st.subheader("📊 Generation Summary")
+                    summary_df = pd.DataFrame(list(label_summary.items()), columns=['Rack', 'Labels Generated'])
                     st.table(summary_df)
+                    progress_bar.empty()
                 status_text.empty()
         else:
             st.error("❌ Required columns (Station or Container) not found in file.")
