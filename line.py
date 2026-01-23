@@ -4,12 +4,23 @@ import os
 import io
 import re
 import math
-from reportlab.lib.pagesizes import A4
+import datetime
+from io import BytesIO
+
+# --- PDF & Image Imports ---
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph, PageBreak, Image as RLImage
 from reportlab.lib.units import cm
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+
+# --- QR Code Import ---
+try:
+    import qrcode
+    QR_AVAILABLE = True
+except ImportError:
+    QR_AVAILABLE = False
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -18,22 +29,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Style Definitions ---
+# --- Style Definitions (Existing) ---
 bold_style_v2 = ParagraphStyle(
-    name='Bold_v2',
-    fontName='Helvetica-Bold',
-    fontSize=10,
-    alignment=TA_LEFT,
-    leading=32, 
-    spaceBefore=0,
-    spaceAfter=2,
-    wordWrap='CJK'
+    name='Bold_v2', fontName='Helvetica-Bold', fontSize=10,
+    alignment=TA_LEFT, leading=32, spaceBefore=0, spaceAfter=2, wordWrap='CJK'
 )
 desc_style = ParagraphStyle(
-    name='Description', fontName='Helvetica', fontSize=20, alignment=TA_LEFT, leading=16, spaceBefore=2, spaceAfter=2
+    name='Description', fontName='Helvetica', fontSize=20, 
+    alignment=TA_LEFT, leading=16, spaceBefore=2, spaceAfter=2
 )
 
-# --- Formatting Functions ---
+# --- Style Definitions (New for Bin/List) ---
+bin_bold_style = ParagraphStyle('BinBold', fontName='Helvetica-Bold', fontSize=24, alignment=TA_CENTER)
+bin_desc_style = ParagraphStyle('BinDesc', fontName='Helvetica', fontSize=10, alignment=TA_CENTER)
+bin_qty_style = ParagraphStyle('BinQty', fontName='Helvetica-Bold', fontSize=28, alignment=TA_CENTER)
+rl_header_style = ParagraphStyle('RLHeader', fontName='Helvetica-Bold', fontSize=10, alignment=TA_LEFT)
+rl_cell_left_style = ParagraphStyle('RLCellLeft', fontName='Helvetica', fontSize=10, alignment=TA_LEFT)
+
+# --- Formatting Functions (Existing - Unchanged) ---
 def format_part_no_v2(part_no):
     if not part_no or not isinstance(part_no, str): part_no = str(part_no)
     if part_no.upper() == 'EMPTY':
@@ -47,7 +60,7 @@ def format_description(desc):
     if not desc or not isinstance(desc, str): desc = str(desc)
     return Paragraph(desc, desc_style)
 
-# --- Core Logic Functions ---
+# --- Core Logic Functions (Existing - Unchanged) ---
 def find_required_columns(df):
     cols = {col.upper().strip(): col for col in df.columns}
     part_no_key = next((k for k in cols if 'PART' in k and ('NO' in k or 'NUM' in k)), None)
@@ -69,189 +82,257 @@ def parse_dimensions(dim_str):
 
 def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, bin_info_map, status_text=None):
     part_no_col, desc_col, model_col, station_col, container_col = find_required_columns(df)
-    
     df_processed = df.copy()
-    rename_dict = {
-        part_no_col: 'Part No', desc_col: 'Description',
-        model_col: 'Bus Model', station_col: 'Station No', container_col: 'Container'
-    }
+    rename_dict = {part_no_col: 'Part No', desc_col: 'Description', model_col: 'Bus Model', station_col: 'Station No', container_col: 'Container'}
     df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
-    
     df_processed['bin_info'] = df_processed['Container'].map(bin_info_map)
     df_processed['bin_area'] = df_processed['bin_info'].apply(lambda x: x['dims'][0] * x['dims'][1] if x else 0)
     df_processed['bins_per_cell'] = df_processed['bin_info'].apply(lambda x: x['capacity'] if x else 1)
     
     final_assigned_data = []
-
-    # --- PROCESS EACH STATION INDIVIDUALLY ---
     for station_no, station_group in df_processed.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Processing Station: {station_no}...")
-        
-        # 1. Calculate how many physical cells this station needs
         station_cells_needed = 0
         container_groups = sorted(station_group.groupby('Container'), key=lambda x: x[1]['bin_area'].iloc[0], reverse=True)
-        
         for _, cont_df in container_groups:
             cap = cont_df['bins_per_cell'].iloc[0]
             station_cells_needed += math.ceil(len(cont_df) / cap)
         
-        # 2. Calculate racks needed for THIS station and generate fresh rack IDs (starting 01)
         cells_per_rack = len(levels) * cells_per_level
         racks_for_station = math.ceil(station_cells_needed / cells_per_rack)
-        
         station_available_cells = []
         for r_idx in range(1, racks_for_station + 1):
             rack_str = f"{r_idx:02d}"
             r1, r2 = rack_str[0], rack_str[1]
             for lvl in sorted(levels):
                 for c_idx in range(1, cells_per_level + 1):
-                    station_available_cells.append({
-                        'Rack No 1st': r1, 'Rack No 2nd': r2, 
-                        'Level': lvl, 'Physical_Cell': f"{c_idx:02d}", 
-                        'Rack': base_rack_id
-                    })
+                    station_available_cells.append({'Rack No 1st': r1, 'Rack No 2nd': r2, 'Level': lvl, 'Physical_Cell': f"{c_idx:02d}", 'Rack': base_rack_id})
 
-        # 3. Assign parts of this station to these specific racks
         current_cell_ptr = 0
         for _, cont_df in container_groups:
             parts = cont_df.to_dict('records')
             cap = parts[0]['bins_per_cell']
-            
             for i in range(0, len(parts), cap):
                 chunk = parts[i:i + cap]
-                loc = station_available_cells[current_cell_ptr]
-                for p in chunk:
-                    p.update(loc)
-                    final_assigned_data.append(p)
-                current_cell_ptr += 1
+                if current_cell_ptr < len(station_available_cells):
+                    loc = station_available_cells[current_cell_ptr]
+                    for p in chunk:
+                        p.update(loc)
+                        final_assigned_data.append(p)
+                    current_cell_ptr += 1
         
-        # 4. Fill remaining cells in the LAST rack of the station with EMPTY
         for i in range(current_cell_ptr, len(station_available_cells)):
-            empty_label = {
-                'Part No': 'EMPTY', 'Description': '', 'Bus Model': station_group['Bus Model'].iloc[0], 
-                'Station No': station_no, 'Container': ''
-            }
+            empty_label = {'Part No': 'EMPTY', 'Description': '', 'Bus Model': station_group['Bus Model'].iloc[0], 'Station No': station_no, 'Container': ''}
             empty_label.update(station_available_cells[i])
             final_assigned_data.append(empty_label)
-
     return pd.DataFrame(final_assigned_data)
 
 def assign_sequential_location_ids(df):
-    # Sort to ensure counting is correct: Station -> Rack -> Level -> Physical Cell
     df_sorted = df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Physical_Cell']).copy()
     df_parts_only = df_sorted[df_sorted['Part No'].astype(str).str.upper() != 'EMPTY'].copy()
-    
     location_counters = {}
     sequential_ids = []
-    
     for _, row in df_parts_only.iterrows():
-        # Key includes Station because Rack 01 exists in multiple stations
         key = (row['Station No'], row['Rack No 1st'], row['Rack No 2nd'], row['Level'])
         if key not in location_counters: location_counters[key] = 1
         sequential_ids.append(location_counters[key])
         location_counters[key] += 1
-        
     df_parts_only['Cell'] = sequential_ids
     df_empty_only = df_sorted[df_sorted['Part No'].astype(str).str.upper() == 'EMPTY'].copy()
     df_empty_only['Cell'] = df_empty_only['Physical_Cell']
-    
     return pd.concat([df_parts_only, df_empty_only], ignore_index=True)
 
 def extract_location_values(row):
     return [str(row.get(c, '')) for c in ['Bus Model', 'Station No', 'Rack', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Cell']]
 
-# --- PDF Generation Functions ---
-def generate_labels_from_excel(df, progress_bar=None):
+# --- BIN LABEL HELPERS (From Snippet) ---
+def generate_qr_code_image(data_string):
+    if not QR_AVAILABLE: return None
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
+    qr.add_data(data_string)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white")
+    img_buffer = BytesIO()
+    qr_img.save(img_buffer, format='PNG')
+    img_buffer.seek(0)
+    return RLImage(img_buffer, width=2.5*cm, height=2.5*cm)
+
+def extract_store_location_data_from_excel(row_data):
+    col_lookup = {str(k).strip().upper(): k for k in row_data.keys()}
+    def get_clean_value(possible_names, default=''):
+        for name in possible_names:
+            clean_name = name.strip().upper()
+            if clean_name in col_lookup:
+                val = row_data.get(col_lookup[clean_name])
+                if pd.notna(val) and str(val).strip().lower() not in ['nan', 'none', 'null', '']:
+                    return str(val).strip()
+        return default
+    return [get_clean_value(['ST. NAME (Short)']), get_clean_value(['Store Location']), get_clean_value(['ABB ZONE']), 
+            get_clean_value(['ABB LOCATION']), get_clean_value(['ABB FLOOR']), get_clean_value(['ABB RACK NO']), get_clean_value(['ABB LEVEL IN RACK'])]
+
+# --- PDF GENERATION: RACK LABELS (Original - Unchanged) ---
+def generate_rack_labels(df, progress_bar=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1*cm, leftMargin=1.5*cm, rightMargin=1.5*cm)
     elements = []
-    
-    # Critical: Sort by Station first so the PDF flows station by station
     df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Cell'], inplace=True)
     df_parts_only = df[df['Part No'].astype(str).str.upper() != 'EMPTY'].copy()
-
     total_labels = len(df_parts_only)
-    label_count = 0
-    label_summary = []
-
     for i, part in enumerate(df_parts_only.to_dict('records')):
         if progress_bar: progress_bar.progress(int((i / total_labels) * 100))
-        
-        if label_count > 0 and label_count % 4 == 0: elements.append(PageBreak())
-
+        if i > 0 and i % 4 == 0: elements.append(PageBreak())
         part_table = Table([['Part No', format_part_no_v2(str(part['Part No']))], ['Description', format_description(str(part['Description']))]], colWidths=[4*cm, 11*cm], rowHeights=[1.9*cm, 2.1*cm])
-        location_values = extract_location_values(part)
-        location_data = [['Line Location'] + location_values]
-        col_widths = [1.7, 2.9, 1.3, 1.2, 1.3, 1.3, 1.3]
-        location_widths = [4 * cm] + [w * (11 * cm) / sum(col_widths) for w in col_widths]
+        loc_vals = extract_location_values(part)
+        location_data = [['Line Location'] + loc_vals]
+        col_props = [1.7, 2.9, 1.3, 1.2, 1.3, 1.3, 1.3]
+        location_widths = [4 * cm] + [w * (11 * cm) / sum(col_props) for w in col_props]
         location_table = Table(location_data, colWidths=location_widths, rowHeights=1.2*cm)
-        
-        part_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 1, colors.black), ('ALIGN', (0, 0), (0, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('FONTSIZE', (0, 0), (0, -1), 16)]))
-        location_colors = [colors.HexColor('#E9967A'), colors.HexColor('#ADD8E6'), colors.HexColor('#90EE90'), colors.HexColor('#FFD700'), colors.HexColor('#ADD8E6'), colors.HexColor('#E9967A'), colors.HexColor('#90EE90')]
-        location_style = [('GRID', (0, 0), (-1, -1), 1, colors.black), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('FONTSIZE', (0, 0), (-1, -1), 16)]
-        for j, color in enumerate(location_colors): location_style.append(('BACKGROUND', (j+1, 0), (j+1, 0), color))
-        location_table.setStyle(TableStyle(location_style))
-        
-        elements.append(part_table); elements.append(Spacer(1, 0.3 * cm)); elements.append(location_table); elements.append(Spacer(1, 0.2 * cm))
-        label_count += 1
-        
-    if elements: doc.build(elements)
-    buffer.seek(0)
-    
-    # Create summary grouped by Station and Rack
+        part_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1, colors.black),('ALIGN', (0,0),(0,-1), 'CENTER'),('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
+        loc_style = [('GRID', (0,0),(-1,-1), 1, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'),('VALIGN', (0,0),(-1,-1), 'MIDDLE'),('FONTSIZE', (0,0),(-1,-1), 16)]
+        for j, c in enumerate([colors.HexColor('#E9967A'), colors.HexColor('#ADD8E6'), colors.HexColor('#90EE90'), colors.HexColor('#FFD700'), colors.HexColor('#ADD8E6'), colors.HexColor('#E9967A'), colors.HexColor('#90EE90')]):
+            loc_style.append(('BACKGROUND', (j+1, 0), (j+1, 0), c))
+        location_table.setStyle(TableStyle(loc_style))
+        elements.extend([part_table, Spacer(1, 0.3*cm), location_table, Spacer(1, 0.2*cm)])
+    doc.build(elements); buffer.seek(0)
     summary = df_parts_only.groupby(['Station No', 'Rack No 1st', 'Rack No 2nd']).size().reset_index(name='Labels')
     summary['Rack'] = summary['Rack No 1st'] + summary['Rack No 2nd']
-    
     return buffer, summary[['Station No', 'Rack', 'Labels']]
 
-# --- Main Application UI ---
+# --- PDF GENERATION: BIN LABELS (From Snippet - Unchanged) ---
+def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
+    STICKER_WIDTH, STICKER_HEIGHT = 10 * cm, 15 * cm
+    CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 7.2 * cm
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT), topMargin=0.2*cm, bottomMargin=STICKER_HEIGHT - CONTENT_BOX_HEIGHT - 0.2*cm, leftMargin=0.1*cm, rightMargin=0.1*cm)
+    df_filtered = df[df['Part No'].str.upper() != 'EMPTY'].copy()
+    df_filtered.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Cell'], inplace=True)
+    all_elements, label_summary = [], {}
+
+    def draw_border(canvas, doc):
+        canvas.saveState(); x_off = (STICKER_WIDTH - CONTENT_BOX_WIDTH) / 2; y_off = STICKER_HEIGHT - CONTENT_BOX_HEIGHT - 0.2*cm
+        canvas.setStrokeColorRGB(0, 0, 0); canvas.setLineWidth(1.8); canvas.rect(x_off + doc.leftMargin, y_off, CONTENT_BOX_WIDTH - 0.2*cm, CONTENT_BOX_HEIGHT); canvas.restoreState()
+
+    for i, row in enumerate(df_filtered.to_dict('records')):
+        if progress_bar: progress_bar.progress(int(((i+1) / len(df_filtered)) * 100))
+        rack_key = f"ST-{row.get('Station No', 'NA')} / Rack {row.get('Rack No 1st', '0')}{row.get('Rack No 2nd', '0')}"
+        label_summary[rack_key] = label_summary.get(rack_key, 0) + 1
+        
+        qr_data = f"Part No: {row.get('Part No')}\nDesc: {row.get('Description')}\nQty/Bin: {row.get('Qty/Bin', 'N/A')}\nStore Loc: {'|'.join(extract_store_location_data_from_excel(row))}"
+        qr_image = generate_qr_code_image(qr_data)
+        content_width = CONTENT_BOX_WIDTH - 0.2*cm
+        
+        main_table = Table([["Part No", Paragraph(f"{row.get('Part No')}", bin_bold_style)], ["Description", Paragraph(str(row.get('Description'))[:50], bin_desc_style)], ["Qty/Bin", Paragraph(str(row.get('Qty/Bin', '1')), bin_qty_style)]], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
+        main_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'),('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
+        
+        # MTM Table Logic
+        mtm_table = None
+        if mtm_models:
+            mtm_qty_vals = [Paragraph(f"<b>{row.get('Qty/Veh', '1')}</b>", bin_qty_style) if str(row.get('Bus Model')).strip().upper() == m.strip().upper() else "" for m in mtm_models]
+            mtm_table = Table([mtm_models, mtm_qty_vals], colWidths=[(3.6*cm)/len(mtm_models)]*len(mtm_models), rowHeights=[0.75*cm, 0.75*cm])
+            mtm_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'),('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
+
+        bottom_row = Table([[mtm_table or "", "", qr_image or "", ""]], colWidths=[3.6*cm, 1.0*cm, 2.5*cm, content_width-7.1*cm], rowHeights=[2.5*cm])
+        all_elements.extend([main_table, Spacer(1, 0.2*cm), bottom_row, PageBreak()])
+    
+    doc.build(all_elements[:-1], onFirstPage=draw_border, onLaterPages=draw_border); buffer.seek(0)
+    return buffer, label_summary
+
+# --- PDF GENERATION: RACK LIST (From Snippet - Unchanged) ---
+def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo_h, fixed_logo_path, progress_bar=None, status_text=None):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=0.5*cm, bottomMargin=0.5*cm, leftMargin=1*cm, rightMargin=1*cm)
+    elements = []
+    df = df[df['Part No'].str.upper() != 'EMPTY'].copy()
+    df['Rack Key'] = df.apply(lambda x: f"{x.get('Rack No 1st', '')}{x.get('Rack No 2nd', '')}", axis=1)
+    grouped = df.groupby(['Station No', 'Rack Key'])
+    
+    for i, ((station_no, rack_key), group) in enumerate(grouped):
+        if progress_bar: progress_bar.progress(int(((i+1) / len(grouped)) * 100))
+        
+        # Header with Logo
+        top_logo_img = ""
+        if top_logo_file:
+            try: top_logo_img = RLImage(io.BytesIO(top_logo_file.getvalue()), width=top_logo_w*cm, height=top_logo_h*cm)
+            except: pass
+        
+        header_table = Table([[Paragraph("Document Ref No.:", rl_header_style), "", top_logo_img]], colWidths=[5*cm, 17.5*cm, 5*cm])
+        elements.append(header_table)
+        
+        # Master Info Table
+        master_data = [[Paragraph("STATION NAME", rl_header_style), Paragraph(str(group.iloc[0].get('Station No')), rl_cell_left_style), Paragraph("STATION NO", rl_header_style), Paragraph(str(station_no), rl_cell_left_style)]]
+        master_table = Table(master_data, colWidths=[4*cm, 9.5*cm, 4*cm, 10*cm], rowHeights=[0.8*cm])
+        master_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1, colors.black),('BACKGROUND', (0,0),(-1,-1), colors.HexColor("#8EAADB"))]))
+        elements.append(master_table)
+        
+        # Parts Table
+        data_rows = [["S.NO", "PART NO", "PART DESCRIPTION", "CONTAINER", "QTY/BIN", "LOCATION"]]
+        for idx, row in enumerate(group.to_dict('records')):
+            loc_str = f"{row.get('Bus Model')}-{row.get('Station No')}-{base_rack_id}{rack_key}-{row.get('Level')}{row.get('Cell')}"
+            data_rows.append([str(idx+1), row.get('Part No'), Paragraph(row.get('Description'), rl_cell_left_style), row.get('Container'), row.get('Qty/Bin', '1'), loc_str])
+        
+        t = Table(data_rows, colWidths=[1.5*cm, 4.5*cm, 9.5*cm, 3.5*cm, 2.5*cm, 6.0*cm])
+        t.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1, colors.black),('BACKGROUND', (0,0),(-1,0), colors.HexColor("#F4B084")),('ALIGN', (0,0),(-1,-1), 'CENTER')]))
+        elements.extend([t, PageBreak()])
+        
+    doc.build(elements); buffer.seek(0)
+    return buffer, len(grouped)
+
+# --- MAIN APPLICATION UI ---
 def main():
     st.title("🏷️ AgiloSmartTag Studio")
     st.markdown("<p style='font-style:italic;'>Designed and Developed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
     st.markdown("---")
 
-    st.sidebar.title("📄 Configuration")
-    base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
-    
+    st.sidebar.title("📄 Output Options")
+    output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
+    base_rack_id = st.sidebar.text_input("Infrastructure ID (e.g., R, TR)", "R")
+
+    # Extra configs for Bin Labels / Rack List
+    mtm_models = []
+    top_logo_file, top_logo_w, top_logo_h = None, 4.0, 1.5
+    if output_type == "Bin Labels":
+        m1 = st.sidebar.text_input("Model 1", "7M")
+        m2 = st.sidebar.text_input("Model 2", "9M")
+        mtm_models = [m.strip() for m in [m1, m2] if m.strip()]
+    elif output_type == "Rack List":
+        top_logo_file = st.sidebar.file_uploader("Upload Top Logo", type=['png', 'jpg'])
+        top_logo_w = st.sidebar.slider("Logo Width", 1.0, 8.0, 4.0)
+
     uploaded_file = st.file_uploader("Upload Your Data Here (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-        st.success(f"✅ Loaded {len(df)} parts.")
-        
         _, _, _, station_col, container_col = find_required_columns(df)
         
         if container_col and station_col:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Global Rack Settings")
-            cell_dim = st.sidebar.text_input("Cell Dimensions (L x W)", "800x400")
+            # Layout Setup
             levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
-            num_cells_per_level = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
+            num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
             
             unique_containers = get_unique_containers(df, container_col)
             bin_info_map = {}
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Container Rules")
             for container in unique_containers:
-                st.sidebar.markdown(f"**{container}**")
-                dim = st.sidebar.text_input(f"Dimensions", key=f"d_{container}", placeholder="600x400")
-                cap = st.sidebar.number_input("Parts per Physical Cell (Capacity)", min_value=1, value=1, key=f"c_{container}")
+                col1, col2 = st.sidebar.columns(2)
+                dim = col1.text_input(f"{container} Dim", "600x400", key=f"d_{container}")
+                cap = col2.number_input(f"Cap", 1, key=f"c_{container}")
                 bin_info_map[container] = {'dims': parse_dimensions(dim), 'capacity': cap}
 
-            if st.button("🚀 Generate PDF Labels", type="primary"):
+            if st.button("🚀 Generate PDF", type="primary"):
                 status_text = st.empty()
-                
-                # Assign parts using the new station-wise reset logic
-                df_assigned = generate_station_wise_assignment(df, base_rack_id, levels, num_cells_per_level, bin_info_map, status_text)
+                df_assigned = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_info_map, status_text)
                 df_final = assign_sequential_location_ids(df_assigned)
                 
                 if not df_final.empty:
                     prog = st.progress(0)
-                    pdf_buf, summary_df = generate_labels_from_excel(df_final, prog)
-                    st.download_button(label="📥 Download PDF", data=pdf_buf.getvalue(), file_name="Station_Labels.pdf", mime="application/pdf")
-                    
-                    st.subheader("📊 Generation Summary")
-                    st.table(summary_df.sort_values(by=['Station No', 'Rack']))
+                    if output_type == "Rack Labels":
+                        pdf_buf, summary = generate_rack_labels(df_final, prog)
+                        st.download_button("📥 Download Rack Labels", pdf_buf.getvalue(), "Rack_Labels.pdf")
+                    elif output_type == "Bin Labels":
+                        pdf_buf, summary = generate_bin_labels(df_final, mtm_models, prog, status_text)
+                        st.download_button("📥 Download Bin Labels", pdf_buf.getvalue(), "Bin_Labels.pdf")
+                    elif output_type == "Rack List":
+                        pdf_buf, count = generate_rack_list_pdf(df_final, base_rack_id, top_logo_file, top_logo_w, top_logo_h, "Image.png", prog)
+                        st.download_button("📥 Download Rack List", pdf_buf.getvalue(), "Rack_List.pdf")
                     prog.empty()
                 status_text.empty()
         else:
