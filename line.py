@@ -187,7 +187,7 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
 
     return pd.DataFrame(final_assigned_data)
 
-def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status_text=None):
+def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text=None):
     req = find_required_columns(df)
     df_p = df.copy()
     df_p.rename(columns={req['Part No']: 'Part No', req['Description']: 'Description', 
