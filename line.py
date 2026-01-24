@@ -249,16 +249,21 @@ def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status
                     rack_num_val = ''.join(filter(str.isdigit, rack_name))
                     # Handle cases where rack_name has no digits
                     if not rack_num_val:
-                        rack_num_val = f"{rack_idx+1:02d}"  # Use rack index as fallback
+                        rack_num_val = f"{rack_idx+1:02d}"
+                    
                     # Ensure at least 2 digits
                     if len(rack_num_val) == 1:
                         rack_num_val = f"0{rack_num_val}"
                     rack_num_1st = rack_num_val[0]
                     rack_num_2nd = rack_num_val[1]
-                    
+        
                     location_info = {
-                        'Rack': base_rack_id, 'Rack No 1st': rack_num_1st, 'Rack No 2nd': rack_num_2nd,
-                        'Level': levels[level_idx], 'Cell': str(cell_idx), 'Station No': station_no,
+                        'Rack': base_rack_id, 
+                        'Rack No 1st': rack_num_1st, 
+                        'Rack No 2nd': rack_num_2nd,
+                        'Level': levels[level_idx], 
+                        'Physical_Cell': f"{cell_idx:02d}",  # ← CHANGED: 'Cell' → 'Physical_Cell' and formatted
+                        'Station No': station_no,
                         'Rack Key': f"{rack_num_1st}{rack_num_2nd}"
                     }
                     
