@@ -624,7 +624,7 @@ def main():
     st.markdown("<p style='font-style:italic;'>Designed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
     
     st.sidebar.title("📄 Config")
-    output_type = st.sidebar.selectbox("Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
+    output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     
     model1, model2, model3 = "7M", "9M", "12M"
     if output_type == "Bin Labels":
@@ -635,60 +635,84 @@ def main():
     base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
     generation_method = st.sidebar.radio("Generation Method:", ["By Cell Dimension", "By Rack Type"])
     
-    uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
+    uploaded_file = st.file_uploader("Upload Your Data Here (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+        st.success(f"✅ Loaded {len(df)} parts.")
         req_cols = find_required_columns(df)
         
         if req_cols['Container'] and req_cols['Station No']:
+            st.sidebar.markdown("---")
+            
             if generation_method == "By Cell Dimension":
-                st.sidebar.subheader("Global Settings")
-                levels = st.sidebar.multiselect("Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'])
-                num_cells = st.sidebar.number_input("Cells Per Level", 1, 50, 10)
+                st.sidebar.subheader("Global Rack Settings")
+                levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
+                num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
                 unique_c = get_unique_containers(df, req_cols['Container'])
-                bin_rules = {c: {'capacity': st.sidebar.number_input(f"Cap: {c}", 1, 100, 1)} for c in unique_c}
-            else:
-                st.sidebar.subheader("Automated Rack Settings")
-                rack_levels = st.sidebar.multiselect("Active Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'])
-                unique_c = get_unique_containers(df, req_cols['Container'])
-                container_rules = {}
+                bin_rules = {}
                 for c in unique_c:
                     st.sidebar.markdown(f"**{c}**")
-                    col1, col2 = st.sidebar.columns(2)
-                    bpl = col1.number_input(f"Bins/Level", 1, 50, 4, key=f"b_{c}")
-                    ppb = col2.number_input(f"Parts/Bin", 1, 100, 1, key=f"p_{c}")
-                    container_rules[c] = {'bins_per_level': bpl, 'parts_per_bin': ppb}
+                    cap = st.sidebar.number_input(f"Parts per Bin (Capacity)", min_value=1, value=1, key=f"c_{c}")
+                    bin_rules[c] = {'capacity': cap}
+            
+            else:  # --- UPDATED: By Rack Type ---
+                st.sidebar.subheader("1. Define Rack Templates")
+                num_rack_types = st.sidebar.number_input("Number of Rack Types", min_value=1, max_value=5, value=1)
+                unique_c = get_unique_containers(df, req_cols['Container'])
+                
+                rack_templates = {}
+                for i in range(num_rack_types):
+                    st.sidebar.markdown(f"### Rack Type {i+1}")
+                    r_name = st.sidebar.text_input(f"Rack Name", value=f"Type {chr(65+i)}", key=f"rn_{i}")
+                    r_levels = st.sidebar.multiselect(f"Levels for {r_name}", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'], key=f"rl_{i}")
+                    
+                    st.sidebar.caption(f"How many bins fit on ONE shelf of {r_name}?")
+                    caps = {}
+                    for c in unique_c:
+                        caps[c] = st.sidebar.number_input(f"{c} per level", min_value=1, value=4, key=f"cap_{i}_{c}")
+                    
+                    rack_templates[r_name] = {'levels': r_levels, 'capacities': caps}
+
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("2. Container Internal Capacity")
+                container_configs = {}
+                for c in unique_c:
+                    container_configs[c] = st.sidebar.number_input(f"Parts per Bin ({c})", min_value=1, value=1, key=f"ppb_{c}")
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 status = st.empty()
+                
                 if generation_method == "By Cell Dimension":
                     df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status)
                 else:
-                    df_a = generate_by_rack_type(df, base_rack_id, rack_levels, container_rules, status)
+                    # Updated call to use the multi-rack template logic
+                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
                 
                 df_final = assign_sequential_location_ids(df_a)
                 
                 if not df_final.empty:
-                    st.success(f"Generated {len(df_final)} positions.")
-                    # Excel Download
+                    st.subheader("📊 Rack Allocation Data")
                     ex_buf = io.BytesIO()
-                    df_final.to_excel(ex_buf, index=False); ex_buf.seek(0)
-                    st.download_button("📥 Download Excel Allocation", ex_buf, "Rack_Allocation.xlsx")
+                    df_final.to_excel(ex_buf, index=False, engine='openpyxl')
+                    ex_buf.seek(0)
+                    st.download_button(label="📥 Download Excel Allocation", data=ex_buf.getvalue(), file_name="Rack_Allocation.xlsx")
                     
                     prog = st.progress(0)
                     if output_type == "Rack Labels":
                         pdf, sum_df = generate_rack_labels(df_final, prog)
                         st.download_button("📥 Download Rack Labels PDF", pdf, "Rack_Labels.pdf")
                     elif output_type == "Bin Labels":
-                        pdf, _ = generate_bin_labels(df_final, [model1, model2, model3], prog, status)
+                        mtm_models = [model.strip() for model in [model1, model2, model3] if model.strip()]
+                        pdf, _ = generate_bin_labels(df_final, mtm_models, prog, status)
                         st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
                     elif output_type == "Rack List":
-                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4, 1.5, "Image.png", prog, status)
+                        fixed_logo_path = "Image.png"
+                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, fixed_logo_path, prog, status)
                         st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
                     prog.empty(); status.empty()
         else:
-            st.error("Missing 'Station' or 'Container' columns in file.")
+            st.error("❌ Missing 'Station' or 'Container' columns in file.")
 
 if __name__ == "__main__":
     main()
