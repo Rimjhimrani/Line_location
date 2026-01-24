@@ -672,7 +672,6 @@ def main():
                     st.sidebar.caption(f"Max Bins per Level in {r_name}:")
                     caps = {}
                     for c in unique_c:
-                        # This asks: "How many of Container A fit on one level of this rack?"
                         caps[c] = st.sidebar.number_input(f"{c} Quantity per Level", min_value=1, value=4, key=f"cap_{i}_{c}")
                     
                     rack_templates[r_name] = {
@@ -686,14 +685,12 @@ def main():
                 container_configs = {}
                 for c in unique_c:
                     st.sidebar.info(f"Container: {c}")
-                    # Asking for Container Dimensions as requested
+                    # UPDATED: Removed Parts per Bin, now only asking for Dimensions
                     c_dim = st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")
-                    # Internal capacity (Parts per Bin) is still needed for the labeling math
-                    p_per_b = st.sidebar.number_input(f"Parts per Bin ({c})", min_value=1, value=1, key=f"ppb_{c}")
                     
                     container_configs[c] = {
                         'dims': parse_dimensions(c_dim),
-                        'parts_per_bin': p_per_b
+                        'parts_per_bin': 1  # Defaulting to 1 since input was removed
                     }
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
@@ -702,7 +699,6 @@ def main():
                 if generation_method == "By Cell Dimension":
                     df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status)
                 else:
-                    # Logic call with Rack templates and Container dimensions
                     df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
                 
                 df_final = assign_sequential_location_ids(df_a)
