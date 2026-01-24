@@ -188,7 +188,6 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
     return pd.DataFrame(final_assigned_data)
 
 def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status_text=None):
-    """Automates allocation by physical dimensions and rack templates."""
     req = find_required_columns(df)
     df_p = df.copy()
     df_p.rename(columns={req['Part No']: 'Part No', req['Description']: 'Description', 
@@ -196,23 +195,20 @@ def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status
                          req['Container']: 'Container'}, inplace=True)
     
     final_data = []
+    # Use the first template defined in the UI as the standard
+    if not rack_templates: return pd.DataFrame()
+    template_name = list(rack_templates.keys())[0]
+    config = rack_templates[template_name]
+    levels = config['levels']
+
     for station_no, station_group in df_p.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Allocating Station: {station_no}...")
-        
-        # Start with Rack 01 for every new station
         curr_rack_num = 1
         curr_lvl_idx = 0
         curr_cell_idx = 1
         
-        # Use the first defined template for the station
-        if not rack_templates: continue
-        template_name = list(rack_templates.keys())[0]
-        config = rack_templates[template_name]
-        levels = config['levels']
-        
-        for container_type, parts_group in station_group.groupby('Container', sort=True):
-            # How many of this container fit on one shelf?
-            bins_per_level = config['capacities'].get(container_type, 1)
+        for cont_type, parts_group in station_group.groupby('Container', sort=True):
+            bins_per_level = config['capacities'].get(cont_type, 1)
             all_parts = parts_group.to_dict('records')
 
             for part in all_parts:
@@ -684,11 +680,11 @@ def main():
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 status_text = st.empty()
-                if generation_method == "By Rack Type":
-                    # Fixes NameError by passing defined variables
-                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text)
-                else:
+                if generation_method == "By Cell Dimension":
                     df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status_text)
+                else:
+                    # UPDATE THIS LINE: Matches the names defined in the sidebar UI
+                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text)
                 
                 df_final = assign_sequential_location_ids(df_a)
                 
