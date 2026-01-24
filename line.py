@@ -712,28 +712,71 @@ def main():
         
         if required_cols['Container'] and required_cols['Station No']:
             st.sidebar.markdown("---")
-            st.sidebar.subheader("Global Rack Settings")
-            cell_dim = st.sidebar.text_input("Cell Dimensions (L x W)", "800x400")
-            levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
-            num_cells_per_level = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
-            
-            unique_containers = get_unique_containers(df, required_cols['Container'])
-            bin_info_map = {}
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Container Rules")
-            for container in unique_containers:
-                st.sidebar.markdown(f"**{container}**")
-                dim = st.sidebar.text_input(f"Dimensions", key=f"d_{container}", placeholder="600x400")
-                cap = st.sidebar.number_input("Parts per Physical Cell (Capacity)", min_value=1, value=1, key=f"c_{container}")
-                bin_info_map[container] = {'dims': parse_dimensions(dim), 'capacity': cap}
+            # REPLACE FROM HERE
+            if generation_method == "By Cell Dimension":
+                # EXISTING CODE - Keep as is:
+                st.sidebar.subheader("Global Rack Settings")
+                cell_dim = st.sidebar.text_input("Cell Dimensions (L x W)", "800x400")
+                levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
+                num_cells_per_level = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
+                unique_containers = get_unique_containers(df, required_cols['Container'])
+                bin_info_map = {}
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("Container Rules")
+                for container in unique_containers:
+                    st.sidebar.markdown(f"**{container}**")
+                    dim = st.sidebar.text_input(f"Dimensions", key=f"d_{container}", placeholder="600x400")
+                    cap = st.sidebar.number_input("Parts per Physical Cell (Capacity)", min_value=1, value=1, key=f"c_{container}")
+                    bin_info_map[container] = {'dims': parse_dimensions(dim), 'capacity': cap}
+            else:  # By Rack Type
+                st.sidebar.subheader("Rack Type Configuration")
+                num_rack_types = st.sidebar.number_input("Number of Rack Types", min_value=1, max_value=10, value=2)
+                rack_configs = {}
+                unique_containers = get_unique_containers(df, required_cols['Container'])
+                for i in range(num_rack_types):
+                    st.sidebar.markdown(f"### Rack Type {i+1}")
+                    rack_name = st.sidebar.text_input(f"Rack Name", value=f"Rack_{chr(65+i)}", key=f"rname_{i}")
+                    rack_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rdim_{i}")
+                    rack_levels = st.sidebar.multiselect(f"Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'], key=f"rlvl_{i}")
+                    st.sidebar.markdown(f"**Container Capacities per Level:**")
+                    rack_bin_counts = {}
+                    for container in unique_containers:
+                        capacity = st.sidebar.number_input(f"{container} per level", min_value=0, value=2, key=f"cap_{i}_{container}")
+                        rack_bin_counts[container] = capacity
+                    rack_configs[rack_name] = {
+                        'dims': parse_dimensions(rack_dim),
+                        'levels': rack_levels,
+                        'rack_bin_counts': rack_bin_counts
+                    }
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("Container Dimensions")
+                container_dims = {}
+                for container in unique_containers:
+                    dim = st.sidebar.text_input(f"{container} Dimensions", key=f"cdim_{container}", placeholder="600x400")
+                    container_dims[container] = parse_dimensions(dim)
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 status_text = st.empty()
                 
-                df_assigned = generate_station_wise_assignment(df, base_rack_id, levels, num_cells_per_level, bin_info_map, status_text)
+                if generation_method == "By Cell Dimension":
+                    df_assigned = generate_station_wise_assignment(df, base_rack_id, levels, num_cells_per_level, bin_info_map, status_text)
+                else:  # By Rack Type
+                    df_assigned = generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status_text)
+                    
                 df_final = assign_sequential_location_ids(df_assigned)
                 
                 if not df_final.empty:
+                    st.subheader("📊 Rack Allocation Data")
+                    excel_buffer = io.BytesIO()
+                    df_final.to_excel(excel_buffer, index=False, engine='openpyxl')
+                    excel_buffer.seek(0)
+                    st.download_button(
+                        label="📥 Download Rack Allocation (Excel)",
+                        data=excel_buffer.getvalue(),
+                        file_name="Rack_Allocation.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    # EXISTING PDF GENERATION CODE CONTINUES HERE:
                     prog = st.progress(0)
                     
                     if output_type == "Rack Labels":
