@@ -617,7 +617,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
 # --- Main Application UI ---
 def main():
     st.title("🏷️ AgiloSmartTag Studio")
-    st.markdown("<p style='font-style:italic;'>Designed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-style:italic;'>Designed and Developed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
     
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
