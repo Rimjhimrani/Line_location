@@ -679,12 +679,11 @@ def main():
                     container_configs[c] = {'dims': c_dim}
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
-                status_text = st.empty()
+                status = st.empty()
                 if generation_method == "By Cell Dimension":
-                    df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status_text)
+                    df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status)
                 else:
-                    # UPDATE THIS LINE: Matches the names defined in the sidebar UI
-                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text)
+                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
                 
                 df_final = assign_sequential_location_ids(df_a)
                 
