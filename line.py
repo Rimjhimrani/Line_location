@@ -188,73 +188,52 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
     return pd.DataFrame(final_assigned_data)
 
 def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status_text=None):
-    """
-    Allocates parts into bins, bins into levels, and levels into racks.
-    - Bins per Level: Manually defined per container type.
-    - Parts per Bin: Manually defined per container type.
-    - Racks: Automatically increment (01, 02...) per station.
-    """
-    required_cols = find_required_columns(df)
-    df_processed = df.copy()
-    rename_dict = {
-        required_cols['Part No']: 'Part No', 
-        required_cols['Description']: 'Description',
-        required_cols['Bus Model']: 'Bus Model', 
-        required_cols['Station No']: 'Station No', 
-        required_cols['Container']: 'Container'
-    }
-    df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
+    req = find_required_columns(df)
+    df_p = df.copy()
+    df_p.rename(columns={req['Part No']: 'Part No', req['Description']: 'Description', 
+                         req['Bus Model']: 'Bus Model', req['Station No']: 'Station No', 
+                         req['Container']: 'Container'}, inplace=True)
     
-    final_parts_list = []
-    
-    for station_no, station_group in df_processed.groupby('Station No', sort=True):
-        if status_text: status_text.text(f"Processing station: {station_no}...")
+    final_data = []
+    for station_no, station_group in df_p.groupby('Station No', sort=True):
+        if status_text: status_text.text(f"Processing Station: {station_no}...")
         
-        current_rack_num = 1
-        current_lvl_idx = 0
-        current_cell_idx = 1
+        # Start at Rack 01 for every new station
+        curr_rack_num = 1
+        curr_lvl_idx = 0
+        curr_cell_idx = 1
         
-        # Process each container group within the station
-        for container_type, parts_group in station_group.groupby('Container', sort=True):
-            rule = container_rules.get(container_type, {'bins_per_level': 4, 'parts_per_bin': 1})
-            
-            bins_per_lvl_limit = rule['bins_per_level']
-            parts_per_bin_limit = rule['parts_per_bin']
+        # Pick the first Rack Type as the default template for the station
+        template_name = list(rack_templates.keys())[0]
+        config = rack_templates[template_name]
+        levels = config['levels']
+
+        for cont_type, parts_group in station_group.groupby('Container', sort=True):
+            # Get how many bins of THIS container fit on ONE shelf of THIS rack type
+            bins_per_level = config['capacities'].get(cont_type, 1)
+            parts_per_bin = container_configs.get(cont_type, 1)
             
             all_parts = parts_group.to_dict('records')
-            
-            # Group parts into Bins (Capacity)
-            for i in range(0, len(all_parts), parts_per_bin_limit):
-                bin_chunk = all_parts[i : i + parts_per_bin_limit]
+            for i in range(0, len(all_parts), parts_per_bin):
+                bin_chunk = all_parts[i : i + parts_per_bin]
                 
-                # If current level is full, move to next level
-                if current_cell_idx > bins_per_lvl_limit:
-                    current_cell_idx = 1
-                    current_lvl_idx += 1
+                if curr_cell_idx > bins_per_level:
+                    curr_cell_idx = 1
+                    curr_lvl_idx += 1
                 
-                # If all levels in rack are full, move to next rack (01 -> 02)
-                if current_lvl_idx >= len(rack_levels):
-                    current_lvl_idx = 0
-                    current_rack_num += 1
-                    current_cell_idx = 1
+                if curr_lvl_idx >= len(levels):
+                    curr_lvl_idx = 0
+                    curr_rack_num += 1
+                    curr_cell_idx = 1
 
-                rack_str = f"{current_rack_num:02d}"
-                
+                rack_str = f"{curr_rack_num:02d}"
                 for part in bin_chunk:
-                    part.update({
-                        'Rack': base_rack_id,
-                        'Rack No 1st': rack_str[0],
-                        'Rack No 2nd': rack_str[1],
-                        'Level': rack_levels[current_lvl_idx],
-                        'Physical_Cell': f"{current_cell_idx:02d}",
-                        'Station No': station_no,
-                        'Rack Key': rack_str
-                    })
-                    final_parts_list.append(part)
-                
-                current_cell_idx += 1 # Increment bin position
-
-    return pd.DataFrame(final_parts_list)
+                    part.update({'Rack': base_rack_id, 'Rack No 1st': rack_str[0], 'Rack No 2nd': rack_str[1],
+                                 'Level': levels[curr_lvl_idx], 'Physical_Cell': f"{curr_cell_idx:02d}",
+                                 'Station No': station_no, 'Rack Key': rack_str})
+                    final_data.append(part)
+                curr_cell_idx += 1
+    return pd.DataFrame(final_data)
     
 def assign_sequential_location_ids(df):
     df_sorted = df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Physical_Cell']).copy()
