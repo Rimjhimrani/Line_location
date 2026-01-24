@@ -692,6 +692,15 @@ def main():
     
     st.sidebar.markdown("---")
     base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
+
+    # ADD THIS SECTION HERE:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Generation Method")
+    generation_method = st.sidebar.radio(
+        "Choose Method:",
+        ["By Cell Dimension", "By Rack Type"],
+        help="Cell Dimension: Traditional uniform rack setup | Rack Type: Predefined rack configurations"
+    )
     
     uploaded_file = st.file_uploader("Upload Your Data Here (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
