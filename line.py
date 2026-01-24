@@ -188,85 +188,52 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
     return pd.DataFrame(final_assigned_data)
 
 def generate_by_rack_type(df, base_rack_id, rack_configs, container_dims, status_text=None):
-    """
-    Automated rack allocation using multiple Rack Types and Container Dimensions.
-    Matches the updated main() parameters.
-    """
-    required_cols = find_required_columns(df)
-    df_processed = df.copy()
+    """Automates allocation by physical dimensions and rack templates."""
+    req = find_required_columns(df)
+    df_p = df.copy()
+    df_p.rename(columns={req['Part No']: 'Part No', req['Description']: 'Description', 
+                         req['Bus Model']: 'Bus Model', req['Station No']: 'Station No', 
+                         req['Container']: 'Container'}, inplace=True)
     
-    # Rename columns for internal logic consistency
-    rename_dict = {
-        required_cols['Part No']: 'Part No', 
-        required_cols['Description']: 'Description',
-        required_cols['Bus Model']: 'Bus Model', 
-        required_cols['Station No']: 'Station No', 
-        required_cols['Container']: 'Container'
-    }
-    df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
-    
-    final_parts_list = []
-    
-    # Process each station independently
-    for station_no, station_group in df_processed.groupby('Station No', sort=True):
+    final_data = []
+    for station_no, station_group in df_p.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Allocating Station: {station_no}...")
         
-        # Reset rack counter for every new station
-        current_rack_num = 1
-        current_lvl_idx = 0
-        current_cell_idx = 1
+        # Start with Rack 01 for every new station
+        curr_rack_num = 1
+        curr_lvl_idx = 0
+        curr_cell_idx = 1
         
-        # We use the first Rack Type defined in the UI as the template for this station
-        if not rack_templates:
-            continue
-            
+        # Use the first defined template for the station
+        if not rack_templates: continue
         template_name = list(rack_templates.keys())[0]
         config = rack_templates[template_name]
         levels = config['levels']
         
-        # Process parts grouped by Container type
         for container_type, parts_group in station_group.groupby('Container', sort=True):
-            # Get rules for this specific container in this specific rack type
+            # How many of this container fit on one shelf?
             bins_per_level = config['capacities'].get(container_type, 1)
-            
-            # Get internal capacity (Parts per Bin) - Default is 1 based on your last request
-            parts_per_bin = container_configs.get(container_type, {}).get('parts_per_bin', 1)
-            
             all_parts = parts_group.to_dict('records')
-            
-            # Fill bins
-            for i in range(0, len(all_parts), parts_per_bin):
-                bin_chunk = all_parts[i : i + parts_per_bin]
-                
-                # Check if current level is full -> Move to next level
-                if current_cell_idx > bins_per_level:
-                    current_cell_idx = 1
-                    current_lvl_idx += 1
-                
-                # Check if all levels in rack are full -> Move to next Rack (01, 02...)
-                if current_lvl_idx >= len(levels):
-                    current_lvl_idx = 0
-                    current_rack_num += 1
-                    current_cell_idx = 1
 
-                rack_str = f"{current_rack_num:02d}"
+            for part in all_parts:
+                if curr_cell_idx > bins_per_level:
+                    curr_cell_idx = 1
+                    curr_lvl_idx += 1
                 
-                # Assign locations to parts
-                for part in bin_chunk:
-                    part.update({
-                        'Rack': base_rack_id,
-                        'Rack No 1st': rack_str[0],
-                        'Rack No 2nd': rack_str[1],
-                        'Level': levels[current_lvl_idx],
-                        'Physical_Cell': f"{current_cell_idx:02d}",
-                        'Station No': station_no,
-                        'Rack Key': rack_str
-                    })
-                    final_parts_list.append(part)
-                
-                current_cell_idx += 1
+                if curr_lvl_idx >= len(levels):
+                    curr_lvl_idx = 0
+                    curr_rack_num += 1
+                    curr_cell_idx = 1
 
-    return pd.DataFrame(final_parts_list)
+                rack_str = f"{curr_rack_num:02d}"
+                part.update({
+                    'Rack': base_rack_id, 'Rack No 1st': rack_str[0], 'Rack No 2nd': rack_str[1],
+                    'Level': levels[curr_lvl_idx], 'Physical_Cell': f"{curr_cell_idx:02d}",
+                    'Station No': station_no, 'Rack Key': rack_str
+                })
+                final_data.append(part)
+                curr_cell_idx += 1
+    return pd.DataFrame(final_data)
     
 def assign_sequential_location_ids(df):
     df_sorted = df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Physical_Cell']).copy()
@@ -692,47 +659,36 @@ def main():
             
             else:  # --- UPDATED: By Rack Type ---
                 st.sidebar.subheader("1. Rack Type Configuration")
-                num_rack_types = st.sidebar.number_input("How many types of Rack?", min_value=1, max_value=5, value=1)
+                num_rack_types = st.sidebar.number_input("Number of Rack Types", 1, 5, 1)
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 
                 rack_templates = {}
                 for i in range(num_rack_types):
                     st.sidebar.markdown(f"#### Rack Type {i+1}")
-                    r_name = st.sidebar.text_input(f"Rack Name", value=f"Rack Type {chr(65+i)}", key=f"rn_{i}")
+                    r_name = st.sidebar.text_input(f"Rack Name", f"Type {chr(65+i)}", key=f"rn_{i}")
                     r_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
-                    r_levels = st.sidebar.multiselect(f"Levels for {r_name}", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'], key=f"rl_{i}")
+                    r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                     
-                    st.sidebar.caption(f"Max Bins per Level in {r_name}:")
+                    st.sidebar.caption(f"Bins per Shelf for {r_name}:")
                     caps = {}
                     for c in unique_c:
-                        caps[c] = st.sidebar.number_input(f"{c} Quantity per Level", min_value=1, value=4, key=f"cap_{i}_{c}")
-                    
-                    rack_templates[r_name] = {
-                        'dims': parse_dimensions(r_dim),
-                        'levels': r_levels, 
-                        'capacities': caps
-                    }
+                        caps[c] = st.sidebar.number_input(f"{c} per shelf", 1, 50, 4, key=f"cap_{i}_{c}")
+                    rack_templates[r_name] = {'levels': r_levels, 'capacities': caps, 'dims': r_dim}
 
                 st.sidebar.markdown("---")
                 st.sidebar.subheader("2. Container Dimensions")
                 container_configs = {}
                 for c in unique_c:
-                    st.sidebar.info(f"Container: {c}")
-                    # UPDATED: Removed Parts per Bin, now only asking for Dimensions
                     c_dim = st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")
-                    
-                    container_configs[c] = {
-                        'dims': parse_dimensions(c_dim),
-                        'parts_per_bin': 1  # Defaulting to 1 since input was removed
-                    }
+                    container_configs[c] = {'dims': c_dim}
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
-                status = st.empty()
-                
-                if generation_method == "By Cell Dimension":
-                    df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status)
+                status_text = st.empty()
+                if generation_method == "By Rack Type":
+                    # Fixes NameError by passing defined variables
+                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text)
                 else:
-                    df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
+                    df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status_text)
                 
                 df_final = assign_sequential_location_ids(df_a)
                 
