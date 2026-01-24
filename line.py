@@ -626,6 +626,7 @@ def main():
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     
+    # Vehicle Models for MTM Table
     model1, model2, model3 = "7M", "9M", "12M"
     if output_type == "Bin Labels":
         model1 = st.sidebar.text_input("Model 1", "7M")
@@ -657,28 +658,43 @@ def main():
                     bin_rules[c] = {'capacity': cap}
             
             else:  # --- UPDATED: By Rack Type ---
-                st.sidebar.subheader("1. Define Rack Templates")
-                num_rack_types = st.sidebar.number_input("Number of Rack Types", min_value=1, max_value=5, value=1)
+                st.sidebar.subheader("1. Rack Type Configuration")
+                num_rack_types = st.sidebar.number_input("How many types of Rack?", min_value=1, max_value=5, value=1)
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 
                 rack_templates = {}
                 for i in range(num_rack_types):
-                    st.sidebar.markdown(f"### Rack Type {i+1}")
-                    r_name = st.sidebar.text_input(f"Rack Name", value=f"Type {chr(65+i)}", key=f"rn_{i}")
+                    st.sidebar.markdown(f"#### Rack Type {i+1}")
+                    r_name = st.sidebar.text_input(f"Rack Name", value=f"Rack Type {chr(65+i)}", key=f"rn_{i}")
+                    r_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
                     r_levels = st.sidebar.multiselect(f"Levels for {r_name}", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'], key=f"rl_{i}")
                     
-                    st.sidebar.caption(f"How many bins fit on ONE shelf of {r_name}?")
+                    st.sidebar.caption(f"Max Bins per Level in {r_name}:")
                     caps = {}
                     for c in unique_c:
-                        caps[c] = st.sidebar.number_input(f"{c} per level", min_value=1, value=4, key=f"cap_{i}_{c}")
+                        # This asks: "How many of Container A fit on one level of this rack?"
+                        caps[c] = st.sidebar.number_input(f"{c} Quantity per Level", min_value=1, value=4, key=f"cap_{i}_{c}")
                     
-                    rack_templates[r_name] = {'levels': r_levels, 'capacities': caps}
+                    rack_templates[r_name] = {
+                        'dims': parse_dimensions(r_dim),
+                        'levels': r_levels, 
+                        'capacities': caps
+                    }
 
                 st.sidebar.markdown("---")
-                st.sidebar.subheader("2. Container Internal Capacity")
+                st.sidebar.subheader("2. Container Dimensions")
                 container_configs = {}
                 for c in unique_c:
-                    container_configs[c] = st.sidebar.number_input(f"Parts per Bin ({c})", min_value=1, value=1, key=f"ppb_{c}")
+                    st.sidebar.info(f"Container: {c}")
+                    # Asking for Container Dimensions as requested
+                    c_dim = st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")
+                    # Internal capacity (Parts per Bin) is still needed for the labeling math
+                    p_per_b = st.sidebar.number_input(f"Parts per Bin ({c})", min_value=1, value=1, key=f"ppb_{c}")
+                    
+                    container_configs[c] = {
+                        'dims': parse_dimensions(c_dim),
+                        'parts_per_bin': p_per_b
+                    }
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 status = st.empty()
@@ -686,7 +702,7 @@ def main():
                 if generation_method == "By Cell Dimension":
                     df_a = generate_station_wise_assignment(df, base_rack_id, levels, num_cells, bin_rules, status)
                 else:
-                    # Updated call to use the multi-rack template logic
+                    # Logic call with Rack templates and Container dimensions
                     df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
                 
                 df_final = assign_sequential_location_ids(df_a)
