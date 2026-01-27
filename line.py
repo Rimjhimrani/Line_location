@@ -99,7 +99,9 @@ def find_required_columns(df):
     part_no_key = next((k for k in cols if 'PART' in k and ('NO' in k or 'NUM' in k)), None)
     desc_key = next((k for k in cols if 'DESC' in k), None)
     bus_model_key = next((k for k in cols if 'BUS' in k and 'MODEL' in k), None)
-    station_no_key = next((k for k in cols if 'STATION' in k), None)
+    station_no_key = next((k for k in cols if 'STATION' in k and 'NO' in k), None)
+    if not station_no_key:
+        station_no_key = next((k for k in cols if 'STATION' in k), None)
     container_type_key = next((k for k in cols if 'CONTAINER' in k), None)
     return {
         'Part No': cols.get(part_no_key),
@@ -267,11 +269,10 @@ def extract_store_location_data_from_excel(row):
     floor = get_clean_value(['ABB FLOOR', 'ABB_FLOOR', 'ABBFLOOR'])
     rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'])
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
-    
-    # Differentiation: Station name (short) used specifically for Store Location labels
     station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
     
-    return [station_name_short, store_location, zone, location, floor, rack_no, level_in_rack]
+    # As requested: 1st Cell = Store Location, 2nd Cell = Station Name (Short)
+    return [store_location, station_name_short, zone, location, floor, rack_no, level_in_rack]
 
 def generate_qr_code_image(data):
     if not QR_AVAILABLE:
@@ -451,7 +452,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     buffer.seek(0)
     return buffer, label_summary
 
-# --- PDF Generation: Rack List (Updated: Station Name Short restored) ---
+# --- PDF Generation: Rack List (Restored Station Name Header) ---
 def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo_h, fixed_logo_path, progress_bar=None, status_text=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=0.5*cm, bottomMargin=0.5*cm, leftMargin=1*cm, rightMargin=1*cm)
@@ -472,8 +473,8 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        # Restored Station Name specifically for Short Name extraction as requested
-        station_name_short = extract_store_location_data_from_excel(first_row)[0]
+        # Use Short name for Station Name display in header as requested
+        station_name_short = str(first_row.get('ST. NAME (Short)', first_row.get('Station Name Short', '')))
         bus_model = str(first_row.get('Bus Model', ''))
         
         top_logo_img = ""
@@ -580,7 +581,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         today_date = datetime.date.today().strftime("%d-%m-%Y")
         
         fixed_logo_path = "Image.png"
-        fixed_logo_img = Paragraph("<b>[Agilomatrix Logo Missing]</b>", rl_cell_left_style)
+        fixed_logo_img = Paragraph("<b>[Logo Missing]</b>", rl_cell_left_style)
         if os.path.exists(fixed_logo_path):
             try:
                  fixed_logo_img = RLImage(fixed_logo_path, width=4.3*cm, height=1.5*cm)
@@ -648,14 +649,14 @@ def main():
             
             if generation_method == "By Cell Dimension":
                 st.sidebar.subheader("Global Rack Settings")
-                # Common fields for all containers
+                # Common fields as requested
                 cell_dim_common = st.sidebar.text_input("Cell Dimension (L x W)", "600x400")
                 levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
                 num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
                 
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 bin_rules = {}
-                # Specific fields per individual container type
+                # Container-specific fields as requested
                 for c in unique_c:
                     st.sidebar.markdown(f"#### Container: {c}")
                     b_dim = st.sidebar.text_input(f"BinType / Container Dimension - {c}", "400x300", key=f"bd_{c}")
