@@ -134,7 +134,6 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
     df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
     
     df_processed['bin_info'] = df_processed['Container'].map(bin_info_map)
-    # logic structure remains same, use provided info to map capacities
     df_processed['bins_per_cell'] = df_processed['bin_info'].apply(lambda x: x['capacity'] if x else 1)
     
     final_assigned_data = []
@@ -269,7 +268,7 @@ def extract_store_location_data_from_excel(row):
     rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'])
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
     
-    # Logic to ensure the Store Location Station Name (Short) is used correctly
+    # Differentiation: Station name (short) used specifically for Store Location labels
     station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
     
     return [station_name_short, store_location, zone, location, floor, rack_no, level_in_rack]
@@ -452,7 +451,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     buffer.seek(0)
     return buffer, label_summary
 
-# --- PDF Generation: Rack List (Updated: STATION NAME removed) ---
+# --- PDF Generation: Rack List (Updated: Station Name Short restored) ---
 def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo_h, fixed_logo_path, progress_bar=None, status_text=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=0.5*cm, bottomMargin=0.5*cm, leftMargin=1*cm, rightMargin=1*cm)
@@ -473,7 +472,8 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        # Note: Station Name is intentionally not extracted into the template as per request
+        # Restored Station Name specifically for Short Name extraction as requested
+        station_name_short = extract_store_location_data_from_excel(first_row)[0]
         bus_model = str(first_row.get('Bus Model', ''))
         
         top_logo_img = ""
@@ -492,16 +492,16 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
-        # STATION NAME row completely removed from header layout
         master_data = [
-            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(bus_model, master_value_style_left),
+            [Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), 
+             Paragraph(station_name_short, master_value_style_left),
              Paragraph("STATION NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
              Paragraph(str(station_no), master_value_style_center)],
             
-            [Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(f"Rack - {rack_key}", master_value_style_left),
-             "", ""]
+            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(bus_model, master_value_style_left),
+             Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(f"Rack - {rack_key}", master_value_style_center)]
         ]
         
         bg_blue = colors.HexColor("#8EAADB")
@@ -579,6 +579,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         
         today_date = datetime.date.today().strftime("%d-%m-%Y")
         
+        fixed_logo_path = "Image.png"
         fixed_logo_img = Paragraph("<b>[Agilomatrix Logo Missing]</b>", rl_cell_left_style)
         if os.path.exists(fixed_logo_path):
             try:
@@ -647,15 +648,14 @@ def main():
             
             if generation_method == "By Cell Dimension":
                 st.sidebar.subheader("Global Rack Settings")
-                # Common Dimension for all bins
+                # Common fields for all containers
                 cell_dim_common = st.sidebar.text_input("Cell Dimension (L x W)", "600x400")
                 levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
                 num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
                 
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 bin_rules = {}
-                
-                # Per-container specific settings as requested
+                # Specific fields per individual container type
                 for c in unique_c:
                     st.sidebar.markdown(f"#### Container: {c}")
                     b_dim = st.sidebar.text_input(f"BinType / Container Dimension - {c}", "400x300", key=f"bd_{c}")
@@ -712,8 +712,7 @@ def main():
                         pdf, _ = generate_bin_labels(df_final, mtm_models, prog, status)
                         st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
                     elif output_type == "Rack List":
-                        fixed_logo_path = "Image.png"
-                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, fixed_logo_path, prog, status)
+                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, "Image.png", prog, status)
                         st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
                     prog.empty(); status.empty()
         else:
