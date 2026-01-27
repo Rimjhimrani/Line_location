@@ -195,7 +195,6 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                          req['Container']: 'Container'}, inplace=True)
     
     final_data = []
-    # Use the first template defined in the UI as the standard
     if not rack_templates: return pd.DataFrame()
     template_name = list(rack_templates.keys())[0]
     config = rack_templates[template_name]
@@ -267,9 +266,11 @@ def extract_store_location_data_from_excel(row):
     floor = get_clean_value(['ABB FLOOR', 'ABB_FLOOR', 'ABBFLOOR'])
     rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'])
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
-    station_name = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'ST. NAME', 'Station Name Short', 'Station Name']) 
     
-    return [station_name, store_location, zone, location, floor, rack_no, level_in_rack]
+    # Differentiation logic: Specifically looking for Short names for store location to avoid confusion with main Station Name
+    station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
+    
+    return [station_name_short, store_location, zone, location, floor, rack_no, level_in_rack]
 
 def generate_qr_code_image(data):
     if not QR_AVAILABLE:
@@ -470,7 +471,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        station_name = str(first_row.get('Station Name', ''))
+        # station_name is no longer extracted/displayed in the header as per request
         bus_model = str(first_row.get('Bus Model', ''))
         
         top_logo_img = ""
@@ -489,23 +490,23 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
+        # STATION NAME removed from Master Data extraction layout
         master_data = [
-            [Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), 
-             Paragraph(station_name, master_value_style_left),
+            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(bus_model, master_value_style_left),
              Paragraph("STATION NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
              Paragraph(str(station_no), master_value_style_center)],
             
-            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(bus_model, master_value_style_left),
-             Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(f"Rack - {rack_key}", master_value_style_center)]
+            [Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(f"Rack - {rack_key}", master_value_style_left),
+             "", ""]
         ]
         
         bg_blue = colors.HexColor("#8EAADB")
         
         master_table = Table(master_data, colWidths=[4*cm, 9.5*cm, 4*cm, 10*cm], rowHeights=[0.8*cm, 0.8*cm])
         master_table.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('GRID', (0,0), (-1, -1), 1, colors.black),
             ('BACKGROUND', (0,0), (-1,-1), bg_blue),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
@@ -622,7 +623,6 @@ def main():
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     
-    # Vehicle Models for MTM Table
     model1, model2, model3 = "7M", "9M", "12M"
     if output_type == "Bin Labels":
         model1 = st.sidebar.text_input("Model 1", "7M")
@@ -646,6 +646,11 @@ def main():
                 st.sidebar.subheader("Global Rack Settings")
                 levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
                 num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
+                
+                # Added requested dimension fields to the Cell Dimension option
+                cell_dim_input = st.sidebar.text_input("Cell Dimension (L x W)", "600x400")
+                bin_dim_input = st.sidebar.text_input("BinType / Container Dimension", "400x300")
+                
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 bin_rules = {}
                 for c in unique_c:
@@ -653,7 +658,7 @@ def main():
                     cap = st.sidebar.number_input(f"Parts per Bin (Capacity)", min_value=1, value=1, key=f"c_{c}")
                     bin_rules[c] = {'capacity': cap}
             
-            else:  # --- UPDATED: By Rack Type ---
+            else:
                 st.sidebar.subheader("1. Rack Type Configuration")
                 num_rack_types = st.sidebar.number_input("Number of Rack Types", 1, 5, 1)
                 unique_c = get_unique_containers(df, req_cols['Container'])
