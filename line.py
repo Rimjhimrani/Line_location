@@ -134,7 +134,8 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
     df_processed.rename(columns={k: v for k, v in rename_dict.items() if k}, inplace=True)
     
     df_processed['bin_info'] = df_processed['Container'].map(bin_info_map)
-    df_processed['bin_area'] = df_processed['bin_info'].apply(lambda x: x['dims'][0] * x['dims'][1] if x else 0)
+    # Using 1 as area logic to maintain original sorting logic structure
+    df_processed['bin_area'] = 1 
     df_processed['bins_per_cell'] = df_processed['bin_info'].apply(lambda x: x['capacity'] if x else 1)
     
     final_assigned_data = []
@@ -143,7 +144,7 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
         if status_text: status_text.text(f"Processing Station: {station_no}...")
         
         station_cells_needed = 0
-        container_groups = sorted(station_group.groupby('Container'), key=lambda x: x[1]['bin_area'].iloc[0], reverse=True)
+        container_groups = sorted(station_group.groupby('Container'), key=lambda x: x[0], reverse=True)
         
         for _, cont_df in container_groups:
             cap = cont_df['bins_per_cell'].iloc[0]
@@ -171,15 +172,16 @@ def generate_station_wise_assignment(df, base_rack_id, levels, cells_per_level, 
             
             for i in range(0, len(parts), cap):
                 chunk = parts[i:i + cap]
-                loc = station_available_cells[current_cell_ptr]
-                for p in chunk:
-                    p.update(loc)
-                    final_assigned_data.append(p)
-                current_cell_ptr += 1
+                if current_cell_ptr < len(station_available_cells):
+                    loc = station_available_cells[current_cell_ptr]
+                    for p in chunk:
+                        p.update(loc)
+                        final_assigned_data.append(p)
+                    current_cell_ptr += 1
         
         for i in range(current_cell_ptr, len(station_available_cells)):
             empty_label = {
-                'Part No': 'EMPTY', 'Description': '', 'Bus Model': station_group['Bus Model'].iloc[0], 
+                'Part No': 'EMPTY', 'Description': '', 'Bus Model': station_group['Bus Model'].iloc[0] if not station_group.empty else '', 
                 'Station No': station_no, 'Container': ''
             }
             empty_label.update(station_available_cells[i])
@@ -231,6 +233,7 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
     return pd.DataFrame(final_data)
     
 def assign_sequential_location_ids(df):
+    if df.empty: return df
     df_sorted = df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Physical_Cell']).copy()
     df_parts_only = df_sorted[df_sorted['Part No'].astype(str).str.upper() != 'EMPTY'].copy()
     
@@ -267,7 +270,7 @@ def extract_store_location_data_from_excel(row):
     rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'])
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
     
-    # Differentiation logic: Specifically looking for Short names for store location to avoid confusion with main Station Name
+    # Differentiation: Station name (short) specifically for store location logic
     station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
     
     return [station_name_short, store_location, zone, location, floor, rack_no, level_in_rack]
@@ -471,7 +474,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        # station_name is no longer extracted/displayed in the header as per request
+        # STATION NAME is intentionally not extracted/displayed as per request
         bus_model = str(first_row.get('Bus Model', ''))
         
         top_logo_img = ""
@@ -490,7 +493,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
-        # STATION NAME removed from Master Data extraction layout
+        # STATION NAME row removed from master_data
         master_data = [
             [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
              Paragraph(bus_model, master_value_style_left),
@@ -623,6 +626,7 @@ def main():
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     
+    # Vehicle Models for MTM Table
     model1, model2, model3 = "7M", "9M", "12M"
     if output_type == "Bin Labels":
         model1 = st.sidebar.text_input("Model 1", "7M")
@@ -646,19 +650,18 @@ def main():
                 st.sidebar.subheader("Global Rack Settings")
                 levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
                 num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
-                
-                # Added requested dimension fields to the Cell Dimension option
-                cell_dim_input = st.sidebar.text_input("Cell Dimension (L x W)", "600x400")
-                bin_dim_input = st.sidebar.text_input("BinType / Container Dimension", "400x300")
-                
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 bin_rules = {}
+                
+                # Added requested dimension fields per container type inside By Cell Dimension
                 for c in unique_c:
-                    st.sidebar.markdown(f"**{c}**")
-                    cap = st.sidebar.number_input(f"Parts per Bin (Capacity)", min_value=1, value=1, key=f"c_{c}")
-                    bin_rules[c] = {'capacity': cap}
+                    st.sidebar.markdown(f"#### Container: {c}")
+                    cap = st.sidebar.number_input(f"Parts per Bin (Capacity) - {c}", min_value=1, value=1, key=f"c_{c}")
+                    c_dim = st.sidebar.text_input(f"Cell Dimension - {c}", "600x400", key=f"cd_{c}")
+                    b_dim = st.sidebar.text_input(f"BinType / Container Dimension - {c}", "400x300", key=f"bd_{c}")
+                    bin_rules[c] = {'capacity': cap, 'cell_dim': c_dim, 'bin_dim': b_dim}
             
-            else:
+            else:  # --- By Rack Type ---
                 st.sidebar.subheader("1. Rack Type Configuration")
                 num_rack_types = st.sidebar.number_input("Number of Rack Types", 1, 5, 1)
                 unique_c = get_unique_containers(df, req_cols['Container'])
