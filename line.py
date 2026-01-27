@@ -99,7 +99,9 @@ def find_required_columns(df):
     part_no_key = next((k for k in cols if 'PART' in k and ('NO' in k or 'NUM' in k)), None)
     desc_key = next((k for k in cols if 'DESC' in k), None)
     bus_model_key = next((k for k in cols if 'BUS' in k and 'MODEL' in k), None)
-    station_no_key = next((k for k in cols if 'STATION' in k), None)
+    station_no_key = next((k for k in cols if 'STATION' in k and 'NO' in k), None)
+    if not station_no_key:
+        station_no_key = next((k for k in cols if 'STATION' in k), None)
     container_type_key = next((k for k in cols if 'CONTAINER' in k), None)
     return {
         'Part No': cols.get(part_no_key),
@@ -267,11 +269,9 @@ def extract_store_location_data_from_excel(row):
     floor = get_clean_value(['ABB FLOOR', 'ABB_FLOOR', 'ABBFLOOR'])
     rack_no = get_clean_value(['ABB RACK NO', 'ABB_RACK_NO', 'ABBRACKNO'])
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
-    
-    # Differentiation: Station Name (Short) is distinct for labels
     station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
     
-    # Updated Order: 1st Cell = Store Location, 2nd Cell = Station Name (Short)
+    # As requested: 1st Cell = Store Location, 2nd Cell = Station Name (Short)
     return [store_location, station_name_short, zone, location, floor, rack_no, level_in_rack]
 
 def generate_qr_code_image(data):
@@ -452,7 +452,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     buffer.seek(0)
     return buffer, label_summary
 
-# --- PDF Generation: Rack List (Updated: STATION NAME removed) ---
+# --- PDF Generation: Rack List (Restored Station Name Header) ---
 def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo_h, fixed_logo_path, progress_bar=None, status_text=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=0.5*cm, bottomMargin=0.5*cm, leftMargin=1*cm, rightMargin=1*cm)
@@ -473,7 +473,8 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        # STATION NAME is intentionally not extracted into the template as per request
+        # Use Short name for Station Name display in header as requested
+        station_name_short = str(first_row.get('ST. NAME (Short)', first_row.get('Station Name Short', '')))
         bus_model = str(first_row.get('Bus Model', ''))
         
         top_logo_img = ""
@@ -492,16 +493,16 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
-        # STATION NAME row completely removed from template as requested
         master_data = [
-            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(bus_model, master_value_style_left),
+            [Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), 
+             Paragraph(station_name_short, master_value_style_left),
              Paragraph("STATION NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
              Paragraph(str(station_no), master_value_style_center)],
             
-            [Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
-             Paragraph(f"Rack - {rack_key}", master_value_style_left),
-             "", ""]
+            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(bus_model, master_value_style_left),
+             Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(f"Rack - {rack_key}", master_value_style_center)]
         ]
         
         bg_blue = colors.HexColor("#8EAADB")
@@ -580,7 +581,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         today_date = datetime.date.today().strftime("%d-%m-%Y")
         
         fixed_logo_path = "Image.png"
-        fixed_logo_img = Paragraph("<b>[Agilomatrix Logo Missing]</b>", rl_cell_left_style)
+        fixed_logo_img = Paragraph("<b>[Logo Missing]</b>", rl_cell_left_style)
         if os.path.exists(fixed_logo_path):
             try:
                  fixed_logo_img = RLImage(fixed_logo_path, width=4.3*cm, height=1.5*cm)
@@ -712,8 +713,7 @@ def main():
                         pdf, _ = generate_bin_labels(df_final, mtm_models, prog, status)
                         st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
                     elif output_type == "Rack List":
-                        fixed_logo_path = "Image.png"
-                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, fixed_logo_path, prog, status)
+                        pdf, count = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, "Image.png", prog, status)
                         st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
                     prog.empty(); status.empty()
         else:
