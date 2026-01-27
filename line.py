@@ -271,7 +271,6 @@ def extract_store_location_data_from_excel(row):
     level_in_rack = get_clean_value(['ABB LEVEL IN RACK', 'ABB_LEVEL_IN_RACK', 'ABBLEVELINRACK'])
     station_name_short = get_clean_value(['ST. NAME (Short)', 'ST.NAME (Short)', 'ST NAME (Short)', 'Station Name Short']) 
     
-    # As requested: 1st Cell = Store Location, 2nd Cell = Station Name (Short)
     return [store_location, station_name_short, zone, location, floor, rack_no, level_in_rack]
 
 def generate_qr_code_image(data):
@@ -330,14 +329,14 @@ def generate_rack_labels(df, progress_bar=None):
     
     return buffer, summary[['Station No', 'Rack', 'Labels']]
 
-# --- PDF Generation: Bin Labels ---
+# --- PDF Generation: Bin Labels (UPDATED with Station Name (Short) Header) ---
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     if not QR_AVAILABLE:
         st.error("❌ QR Code library not found. Please install `qrcode` and `Pillow`.")
         return None, {}
 
     STICKER_WIDTH, STICKER_HEIGHT = 10 * cm, 15 * cm
-    CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 7.2 * cm
+    CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 8.5 * cm # Height adjusted for new row
     
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT),
@@ -372,6 +371,8 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         qty_veh = str(row.get('Qty/Veh', ''))
 
         store_loc_raw = extract_store_location_data_from_excel(row)
+        station_name_short = store_loc_raw[1] # ST NAME (Short)
+        
         line_loc_raw = extract_location_values(row)
 
         store_loc_str = "|".join([str(x).strip() for x in store_loc_raw])
@@ -389,6 +390,17 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         
         content_width = CONTENT_BOX_WIDTH - 0.2*cm
         
+        # --- NEW: Station Name (Short) Header Row for Bin Labels ---
+        station_header_table = Table([
+            [Paragraph("STATION NAME (SHORT)", bin_desc_style), Paragraph(station_name_short, bin_bold_style)]
+        ], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.8*cm])
+        station_header_table.setStyle(TableStyle([
+            ('GRID', (0,0),(-1,-1), 1.2, colors.black),
+            ('ALIGN', (0,0),(-1,-1), 'CENTER'),
+            ('VALIGN', (0,0),(-1,-1), 'MIDDLE'),
+            ('BACKGROUND', (0,0), (0,0), colors.lightgrey)
+        ]))
+
         main_table = Table([
             ["Part No", Paragraph(f"{part_no}", bin_bold_style)],
             ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)],
@@ -444,7 +456,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         )
         bottom_row.setStyle(TableStyle([('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
 
-        all_elements.extend([main_table, store_loc_table, line_loc_table, Spacer(1, 0.2*cm), bottom_row])
+        all_elements.extend([station_header_table, main_table, store_loc_table, line_loc_table, Spacer(1, 0.2*cm), bottom_row])
         if i < total_labels - 1:
             all_elements.append(PageBreak())
 
@@ -452,7 +464,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     buffer.seek(0)
     return buffer, label_summary
 
-# --- PDF Generation: Rack List (Restored Station Name Header) ---
+# --- PDF Generation: Rack List (Header UPDATED to "STATION NAME") ---
 def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo_h, fixed_logo_path, progress_bar=None, status_text=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=0.5*cm, bottomMargin=0.5*cm, leftMargin=1*cm, rightMargin=1*cm)
@@ -473,7 +485,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
         
         first_row = group.iloc[0]
-        # Use Short name for Station Name display in header as requested
+        # Use Short name for Station Name display in header
         station_name_short = str(first_row.get('ST. NAME (Short)', first_row.get('Station Name Short', '')))
         bus_model = str(first_row.get('Bus Model', ''))
         
@@ -493,6 +505,7 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
+        # --- UPDATED: Label is "STATION NAME" while using short name data ---
         master_data = [
             [Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), 
              Paragraph(station_name_short, master_value_style_left),
@@ -649,14 +662,12 @@ def main():
             
             if generation_method == "By Cell Dimension":
                 st.sidebar.subheader("Global Rack Settings")
-                # Common fields as requested
                 cell_dim_common = st.sidebar.text_input("Cell Dimension (L x W)", "600x400")
                 levels = st.sidebar.multiselect("Active Levels", options=['A','B','C','D','E','F','G','H'], default=['A','B','C','D'])
                 num_cells = st.sidebar.number_input("Cells per Level", min_value=1, value=10)
                 
                 unique_c = get_unique_containers(df, req_cols['Container'])
                 bin_rules = {}
-                # Container-specific fields as requested
                 for c in unique_c:
                     st.sidebar.markdown(f"#### Container: {c}")
                     b_dim = st.sidebar.text_input(f"BinType / Container Dimension - {c}", "400x300", key=f"bd_{c}")
