@@ -133,14 +133,21 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
     config = rack_templates[template_name]
     levels = config['levels']
 
+    # Global rack counter across ALL stations
+    global_rack_num = 1
+
     for station_no, station_group in df_p.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Allocating Station: {station_no}...")
-        curr_rack_num = 1
         curr_lvl_idx = 0
         curr_cell_idx = 1
         
         for cont_type, parts_group in station_group.groupby('Container', sort=True):
-            bins_per_level = config['capacities'].get(cont_type, 1)
+            bins_per_level = config['capacities'].get(cont_type, 0)
+            
+            # Skip containers with 0 capacity
+            if bins_per_level == 0:
+                continue
+                
             all_parts = parts_group.to_dict('records')
 
             for part in all_parts:
@@ -150,10 +157,10 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                 
                 if curr_lvl_idx >= len(levels):
                     curr_lvl_idx = 0
-                    curr_rack_num += 1
+                    global_rack_num += 1  # Move to next rack globally
                     curr_cell_idx = 1
 
-                rack_str = f"{curr_rack_num:02d}"
+                rack_str = f"{global_rack_num:02d}"
                 part.update({
                     'Rack': base_rack_id, 'Rack No 1st': rack_str[0], 'Rack No 2nd': rack_str[1],
                     'Level': levels[curr_lvl_idx], 'Physical_Cell': f"{curr_cell_idx:02d}",
@@ -162,7 +169,43 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                 final_data.append(part)
                 curr_cell_idx += 1
     return pd.DataFrame(final_data)
+
+def generate_allocation_summary(df, rack_templates):
+    """Generate summary showing rack counts by station and rack type"""
+    if df.empty:
+        return pd.DataFrame()
     
+    # Get rack type name from templates
+    template_name = list(rack_templates.keys())[0] if rack_templates else "Rack-A"
+    
+    # Group by station and rack
+    summary_data = []
+    
+    for station_no in sorted(df['Station No'].unique()):
+        station_df = df[df['Station No'] == station_no]
+        row_data = {'Station Number': f'ST - {station_no}'}
+        
+        # Count racks per station
+        for rack_key in sorted(station_df['Rack Key'].unique()):
+            rack_col_name = f"{template_name} (Dimension value)"
+            if rack_col_name not in row_data:
+                row_data[rack_col_name] = 0
+            row_data[rack_col_name] += 1
+            
+        summary_data.append(row_data)
+    
+    summary_df = pd.DataFrame(summary_data)
+    
+    # Add total row
+    if not summary_df.empty:
+        total_row = {'Station Number': 'TOTAL'}
+        for col in summary_df.columns:
+            if col != 'Station Number':
+                total_row[col] = summary_df[col].sum()
+        summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
+    
+    return summary_df
+
 def assign_sequential_location_ids(df):
     if df.empty: return df
     df_sorted = df.sort_values(by=['Station No', 'Rack No 1st', 'Rack No 2nd', 'Level', 'Physical_Cell']).copy()
@@ -444,7 +487,8 @@ def main():
                 r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                 
                 st.sidebar.caption(f"Bins per Shelf for {r_name}:")
-                caps = {c: st.sidebar.number_input(f"{c} per shelf", 1, 50, 4, key=f"cap_{i}_{c}") for c in unique_c}
+                # Changed minimum from 1 to 0
+                caps = {c: st.sidebar.number_input(f"{c} per shelf", 0, 50, 4, key=f"cap_{i}_{c}") for c in unique_c}
                 rack_templates[r_name] = {'levels': r_levels, 'capacities': caps, 'dims': r_dim}
 
             st.sidebar.markdown("---")
@@ -457,6 +501,12 @@ def main():
                 df_final = assign_sequential_location_ids(df_a)
                 
                 if not df_final.empty:
+                    # Generate and display summary
+                    st.subheader("📊 SUMMARY")
+                    summary_df = generate_allocation_summary(df_final, rack_templates)
+                    if not summary_df.empty:
+                        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                    
                     st.subheader("📊 Rack Allocation Data")
                     ex_buf = io.BytesIO()
                     df_final.to_excel(ex_buf, index=False)
