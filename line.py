@@ -375,12 +375,11 @@ def generate_rack_labels(df, progress_bar=None):
 
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     if not QR_AVAILABLE:
-        st.error("❌ QR Code library not found.")
+        st.error("❌ QR Code library not found. Please install `qrcode` and `Pillow`.")
         return None, {}
 
     STICKER_WIDTH, STICKER_HEIGHT = 10 * cm, 15 * cm
-    CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 8.5 * cm
-    content_width = CONTENT_BOX_WIDTH - 0.2 * cm  # Define content_width for table calculations
+    CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 7.2 * cm
     
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT),
@@ -404,6 +403,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
 
     for i, row in enumerate(df_filtered.to_dict('records')):
         if progress_bar: progress_bar.progress(int(((i+1) / total_labels) * 100))
+        if status_text: status_text.text(f"Processing Bin Label {i+1}/{total_labels}")
         
         rack_key = f"ST-{row.get('Station No', 'NA')} / Rack {row.get('Rack No 1st', '0')}{row.get('Rack No 2nd', '0')}"
         label_summary[rack_key] = label_summary.get(rack_key, 0) + 1
@@ -412,56 +412,84 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         desc = str(row.get('Description', ''))
         qty_bin = str(row.get('Qty/Bin', ''))
         qty_veh = str(row.get('Qty/Veh', ''))
+
         store_loc_raw = extract_store_location_data_from_excel(row)
-        station_name_short = store_loc_raw[1]
         line_loc_raw = extract_location_values(row)
 
-        qr_data = f"Part No: {part_no}\nDesc: {desc}\nQty/Bin: {qty_bin}\nQty/Veh: {qty_veh}\nStore Loc: {'|'.join(store_loc_raw)}\nLine Loc: {'|'.join(line_loc_raw)}"
+        store_loc_str = "|".join([str(x).strip() for x in store_loc_raw])
+        line_loc_str = "|".join([str(x).strip() for x in line_loc_raw])
+
+        qr_data = (
+            f"Part No: {part_no}\n"
+            f"Desc: {desc}\n"
+            f"Qty/Bin: {qty_bin}\n"
+            f"Qty/Veh: {qty_veh}\n"
+            f"Store Loc: {store_loc_str}\n"
+            f"Line Loc: {line_loc_str}"
+        )
         qr_image = generate_qr_code_image(qr_data)
-
-        # Create station header
-        station_header_table = Table([[Paragraph(f"<b>STATION: {station_name_short}</b>", bin_bold_style)]], 
-                                     colWidths=[content_width], rowHeights=[0.6*cm])
-        station_header_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#4472C4")),
-            ('TEXTCOLOR', (0,0), (-1,-1), colors.white),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
-        ]))
-
-        main_table = Table([["Part No", Paragraph(f"{part_no}", bin_bold_style)], 
-                           ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)], 
-                           ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]], 
-                          colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
+        
+        content_width = CONTENT_BOX_WIDTH - 0.2*cm
+        
+        main_table = Table([
+            ["Part No", Paragraph(f"{part_no}", bin_bold_style)],
+            ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)],
+            ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]
+        ], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
         main_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(0,-1), 'Helvetica'), ('FONTSIZE', (0,0),(0,-1), 11)]))
 
         inner_table_width = content_width * 2 / 3
         col_props = [1.8, 2.4, 0.7, 0.7, 0.7, 0.7, 0.9]
         inner_col_widths = [w * inner_table_width / sum(col_props) for w in col_props]
         
-        store_loc_inner = Table([extract_store_location_data_from_excel(row)], colWidths=inner_col_widths, rowHeights=[0.5*cm])
+        store_loc_values = extract_store_location_data_from_excel(row)
+        store_loc_inner = Table([store_loc_values], colWidths=inner_col_widths, rowHeights=[0.5*cm])
         store_loc_inner.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0),(-1,-1), 9)]))
         store_loc_table = Table([[Paragraph("Store Location", bin_desc_style), store_loc_inner]], colWidths=[content_width/3, inner_table_width], rowHeights=[0.5*cm])
         store_loc_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
         
-        line_loc_inner = Table([extract_location_values(row)], colWidths=inner_col_widths, rowHeights=[0.5*cm])
+        line_loc_values = extract_location_values(row)
+        line_loc_inner = Table([line_loc_values], colWidths=inner_col_widths, rowHeights=[0.5*cm])
         line_loc_inner.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0),(-1,-1), 9)]))
         line_loc_table = Table([[Paragraph("Line Location", bin_desc_style), line_loc_inner]], colWidths=[content_width/3, inner_table_width], rowHeights=[0.5*cm])
         line_loc_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
 
+        # --- DYNAMIC MTM TABLE GENERATION ---
         mtm_table = None
         if mtm_models:
-            qty_veh_val = str(row.get('Qty/Veh', ''))
+            qty_veh = str(row.get('Qty/Veh', ''))
             bus_model = str(row.get('Bus Model', '')).strip().upper()
-            mtm_qty_values = [Paragraph(f"<b>{qty_veh_val}</b>", bin_qty_style) if bus_model == m.strip().upper() and qty_veh_val else "" for m in mtm_models]
-            mtm_table = Table([mtm_models, mtm_qty_values], colWidths=[(3.6*cm)/len(mtm_models)] * len(mtm_models), rowHeights=[0.75*cm, 0.75*cm])
+            
+            mtm_qty_values = []
+            for model in mtm_models:
+                if bus_model == model.strip().upper() and qty_veh:
+                    mtm_qty_values.append(Paragraph(f"<b>{qty_veh}</b>", bin_qty_style))
+                else:
+                    mtm_qty_values.append("")
+            
+            mtm_data = [mtm_models, mtm_qty_values]
+            num_models = len(mtm_models)
+            total_mtm_width = 3.6 * cm
+            col_width = total_mtm_width / num_models if num_models > 0 else total_mtm_width
+
+            mtm_table = Table(mtm_data, colWidths=[col_width] * num_models, rowHeights=[0.75*cm, 0.75*cm])
             mtm_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0),(-1,-1), 9)]))
 
-        bottom_row = Table([[mtm_table if mtm_table else "", "", qr_image or "", ""]], colWidths=[3.6*cm, 1.0*cm, 2.5*cm, content_width-7.1*cm], rowHeights=[2.5*cm])
+        mtm_width, qr_width, gap_width = 3.6 * cm, 2.5 * cm, 1.0 * cm
+        remaining_width = content_width - mtm_width - gap_width - qr_width
+        
+        bottom_row_content = [mtm_table if mtm_table else "", "", qr_image or "", ""]
+
+        bottom_row = Table(
+            [bottom_row_content],
+            colWidths=[mtm_width, gap_width, qr_width, remaining_width],
+            rowHeights=[2.5*cm]
+        )
         bottom_row.setStyle(TableStyle([('VALIGN', (0,0),(-1,-1), 'MIDDLE')]))
 
-        all_elements.extend([station_header_table, main_table, store_loc_table, line_loc_table, Spacer(1, 0.2*cm), bottom_row])
-        if i < total_labels - 1: all_elements.append(PageBreak())
+        all_elements.extend([main_table, store_loc_table, line_loc_table, Spacer(1, 0.2*cm), bottom_row])
+        if i < total_labels - 1:
+            all_elements.append(PageBreak())
 
     if all_elements: doc.build(all_elements, onFirstPage=draw_border, onLaterPages=draw_border)
     buffer.seek(0)
@@ -623,8 +651,20 @@ def main():
                         st.download_button("📥 Download Rack Labels PDF", pdf, "Rack_Labels.pdf")
                     elif output_type == "Bin Labels":
                         mtm_models = [model.strip() for model in [model1, model2, model3] if model.strip()]
-                        pdf, _ = generate_bin_labels(df_final, mtm_models, prog, status)
-                        st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
+                        pdf, label_summary = generate_bin_labels(df_final, mtm_models, prog, status)
+                        if pdf:
+                            st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
+                            
+                            # Create and display summary
+                            if label_summary:
+                                st.subheader("📋 Bin Labels Summary")
+                                summary_df = pd.DataFrame(list(label_summary.items()), columns=['Rack Location', 'Label Count'])
+                                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                                
+                                # Add download button for summary
+                                summary_buf = io.BytesIO()
+                                summary_df.to_excel(summary_buf, index=False)
+                                st.download_button("📥 Download Bin Labels Summary", summary_buf.getvalue(), "Bin_Labels_Summary.xlsx")
                     elif output_type == "Rack List":
                         pdf, _ = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, "Image.png", prog, status)
                         st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
