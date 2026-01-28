@@ -138,22 +138,22 @@ def calculate_bins_per_level(rack_dims, container_dims):
     return max(bins_option1, bins_option2)
 
 def find_rack_type_for_container(container_type, rack_templates, container_configs):
-    """Find which rack type should be used for a given container type"""
+    """Find which rack type should be used for a given container type
+    
+    Logic:
+    - Only uses manual capacity entered by user
+    - If capacity = 0, container is skipped
+    - No auto-calculation from dimensions
+    """
     for rack_name, config in rack_templates.items():
-        # Check if this rack type has capacity for this container
+        # Only check manual capacity
         manual_capacity = config['capacities'].get(container_type, 0)
         
         if manual_capacity > 0:
+            # Manual capacity entered by user - use it!
             return rack_name, config, manual_capacity
-        
-        # Check auto-calculated capacity
-        container_dims = container_configs.get(container_type, {}).get('dims', '')
-        rack_dims = config.get('dims', '')
-        auto_capacity = calculate_bins_per_level(rack_dims, container_dims)
-        
-        if auto_capacity > 0:
-            return rack_name, config, auto_capacity
     
+    # No suitable rack type found (all capacities are 0)
     return None, None, 0
 
 def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text=None):
@@ -558,7 +558,7 @@ def main():
                 r_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
                 r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                 
-                st.sidebar.caption(f"Bins per Shelf for {r_name} (Optional - leave 0 for auto-calculation):")
+                st.sidebar.caption(f"Bins per Shelf for {r_name} (Enter capacity - 0 to skip):")
                 caps = {}
                 for c in unique_c:
                     manual_cap = st.sidebar.number_input(f"{c} per shelf", 0, 50, 0, key=f"cap_{i}_{c}")
@@ -570,8 +570,8 @@ def main():
             container_configs = {c: {'dims': st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")} for c in unique_c}
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
-                # Show capacity calculation info
-                st.info("📐 **Capacity Calculation & Rack Type Assignment:**")
+                # Show capacity configuration
+                st.info("📐 **Rack Type & Capacity Configuration:**")
                 
                 capacity_info = []
                 for rack_name, config in rack_templates.items():
@@ -579,20 +579,14 @@ def main():
                     rack_has_containers = False
                     
                     for c in unique_c:
-                        container_dims = container_configs.get(c, {}).get('dims', '')
                         manual = config['capacities'].get(c, 0)
                         
                         if manual > 0:
-                            capacity_info.append(f"  • **{c}**: {manual} bins/shelf (Manual)")
+                            capacity_info.append(f"  • **{c}**: {manual} bins/shelf")
                             rack_has_containers = True
-                        else:
-                            calculated = calculate_bins_per_level(config['dims'], container_dims)
-                            if calculated > 0:
-                                capacity_info.append(f"  • **{c}**: {calculated} bins/shelf (Auto-calculated)")
-                                rack_has_containers = True
                     
                     if not rack_has_containers:
-                        capacity_info.append(f"  • ⚠️ No containers assigned to this rack type")
+                        capacity_info.append(f"  • ⚠️ No containers assigned to this rack type (all capacities are 0)")
                 
                 st.markdown("\n".join(capacity_info))
                 st.markdown("---")
