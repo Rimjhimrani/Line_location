@@ -380,6 +380,7 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
 
     STICKER_WIDTH, STICKER_HEIGHT = 10 * cm, 15 * cm
     CONTENT_BOX_WIDTH, CONTENT_BOX_HEIGHT = 10 * cm, 8.5 * cm
+    content_width = CONTENT_BOX_WIDTH - 0.2 * cm  # Define content_width for table calculations
     
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT),
@@ -418,7 +419,20 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
         qr_data = f"Part No: {part_no}\nDesc: {desc}\nQty/Bin: {qty_bin}\nQty/Veh: {qty_veh}\nStore Loc: {'|'.join(store_loc_raw)}\nLine Loc: {'|'.join(line_loc_raw)}"
         qr_image = generate_qr_code_image(qr_data)
 
-        main_table = Table([["Part No", Paragraph(f"{part_no}", bin_bold_style)], ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)], ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
+        # Create station header
+        station_header_table = Table([[Paragraph(f"<b>STATION: {station_name_short}</b>", bin_bold_style)]], 
+                                     colWidths=[content_width], rowHeights=[0.6*cm])
+        station_header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#4472C4")),
+            ('TEXTCOLOR', (0,0), (-1,-1), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE')
+        ]))
+
+        main_table = Table([["Part No", Paragraph(f"{part_no}", bin_bold_style)], 
+                           ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)], 
+                           ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]], 
+                          colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
         main_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(0,-1), 'Helvetica'), ('FONTSIZE', (0,0),(0,-1), 11)]))
 
         inner_table_width = content_width * 2 / 3
