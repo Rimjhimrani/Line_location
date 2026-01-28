@@ -103,12 +103,17 @@ def find_required_columns(df):
     if not station_no_key:
         station_no_key = next((k for k in cols if 'STATION' in k), None)
     container_type_key = next((k for k in cols if 'CONTAINER' in k), None)
+    
+    # Find Station Name (not Station Name Short)
+    station_name_key = next((k for k in cols if 'STATION' in k and 'NAME' in k and 'SHORT' not in k), None)
+    
     return {
         'Part No': cols.get(part_no_key),
         'Description': cols.get(desc_key),
         'Bus Model': cols.get(bus_model_key),
         'Station No': cols.get(station_no_key),
-        'Container': cols.get(container_type_key)
+        'Container': cols.get(container_type_key),
+        'Station Name': cols.get(station_name_key)
     }
 
 def get_unique_containers(df, container_col):
@@ -159,9 +164,17 @@ def find_rack_type_for_container(container_type, rack_templates, container_confi
 def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text=None):
     req = find_required_columns(df)
     df_p = df.copy()
-    df_p.rename(columns={req['Part No']: 'Part No', req['Description']: 'Description', 
-                         req['Bus Model']: 'Bus Model', req['Station No']: 'Station No', 
-                         req['Container']: 'Container'}, inplace=True)
+    
+    # Build rename dictionary only for columns that exist
+    rename_dict = {}
+    if req['Part No']: rename_dict[req['Part No']] = 'Part No'
+    if req['Description']: rename_dict[req['Description']] = 'Description'
+    if req['Bus Model']: rename_dict[req['Bus Model']] = 'Bus Model'
+    if req['Station No']: rename_dict[req['Station No']] = 'Station No'
+    if req['Container']: rename_dict[req['Container']] = 'Container'
+    if req['Station Name']: rename_dict[req['Station Name']] = 'Station Name'
+    
+    df_p.rename(columns=rename_dict, inplace=True)
     
     final_data = []
     if not rack_templates: return pd.DataFrame()
@@ -512,49 +525,151 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
 
     for i, ((station_no, rack_key), group) in enumerate(grouped):
         if progress_bar: progress_bar.progress(int(((i+1) / total_groups) * 100))
+        if status_text: status_text.text(f"Generating List for Station {station_no} / Rack {rack_key}")
+        
         first_row = group.iloc[0]
-        station_name_short = str(first_row.get('ST. NAME (Short)', first_row.get('Station Name Short', '')))
+        station_name = str(first_row.get('Station Name', ''))
         bus_model = str(first_row.get('Bus Model', ''))
         
+        # --- TOP LOGO LOGIC (Updated to keep stream fresh) ---
         top_logo_img = ""
         if top_logo_file:
             try:
+                # Create a fresh BytesIO stream for every page iteration to avoid closed file errors
                 img_io = io.BytesIO(top_logo_file.getvalue())
                 top_logo_img = RLImage(img_io, width=top_logo_w*cm, height=top_logo_h*cm)
-            except: pass
+            except:
+                pass
         
         header_table = Table([[Paragraph("Document Ref No.:", rl_header_style), "", top_logo_img]], colWidths=[5*cm, 17.5*cm, 5*cm])
-        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('ALIGN', (-1,-1), (-1,-1), 'RIGHT')]))
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('ALIGN', (-1,-1), (-1,-1), 'RIGHT'),
+        ]))
         elements.append(header_table)
         elements.append(Spacer(1, 0.1*cm))
         
-        master_data = [[Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), Paragraph(station_name_short, master_value_style_left), Paragraph("STATION NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), Paragraph(str(station_no), master_value_style_center)],
-                       [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), Paragraph(bus_model, master_value_style_left), Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), Paragraph(f"Rack - {rack_key}", master_value_style_center)]]
+        master_data = [
+            [Paragraph("STATION NAME", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=12)), 
+             Paragraph(station_name, master_value_style_left),
+             Paragraph("STATION NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(str(station_no), master_value_style_center)],
+            
+            [Paragraph("MODEL", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(bus_model, master_value_style_left),
+             Paragraph("RACK NO", ParagraphStyle('H', fontName='Helvetica-Bold', fontSize=13)), 
+             Paragraph(f"Rack - {rack_key}", master_value_style_center)]
+        ]
+        
+        bg_blue = colors.HexColor("#8EAADB")
         
         master_table = Table(master_data, colWidths=[4*cm, 9.5*cm, 4*cm, 10*cm], rowHeights=[0.8*cm, 0.8*cm])
-        master_table.setStyle(TableStyle([('GRID', (0,0), (-1, -1), 1, colors.black), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#8EAADB")), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('ALIGN', (0,0), (0,-1), 'LEFT'), ('ALIGN', (2,0), (2,-1), 'LEFT'), ('ALIGN', (1,0), (1,-1), 'LEFT'), ('ALIGN', (3,0), (3,-1), 'CENTER')]))
+        master_table.setStyle(TableStyle([
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('BACKGROUND', (0,0), (-1,-1), bg_blue),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+            ('TEXTCOLOR', (0,0), (-1,-1), colors.black),
+            ('ALIGN', (0,0), (0,-1), 'LEFT'), 
+            ('ALIGN', (2,0), (2,-1), 'LEFT'),
+            ('ALIGN', (1,0), (1,-1), 'LEFT'), 
+            ('ALIGN', (3,0), (3,-1), 'CENTER'),
+        ]))
         elements.append(master_table)
         
         header_row = ["S.NO", "PART NO", "PART DESCRIPTION", "CONTAINER", "QTY/BIN", "LOCATION"]
         col_widths = [1.5*cm, 4.5*cm, 9.5*cm, 3.5*cm, 2.5*cm, 6.0*cm]
+        
         if has_zone:
             header_row.insert(0, "ZONE")
             col_widths = [2.0*cm, 1.3*cm, 4.0*cm, 8.2*cm, 3.5*cm, 2.5*cm, 6.0*cm]
             
         data_rows = [header_row]
-        for idx, row in enumerate(group.sort_values(by=['Level', 'Cell']).to_dict('records')):
+        group_sorted = group.sort_values(by=['Level', 'Cell'])
+        bg_orange = colors.HexColor("#F4B084") 
+        
+        table_style_cmds = [
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('BACKGROUND', (0,0), (-1,0), bg_orange), 
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('FONTSIZE', (0,0), (-1,-1), 11),
+            ('TOPPADDING', (0,0), (-1,-1), 1),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+        ]
+        
+        previous_zone = None
+        current_zone_start = 1
+        
+        for idx, row in enumerate(group_sorted.to_dict('records')):
+            s_no = idx + 1
+            p_no = str(row.get('Part No', ''))
+            desc = str(row.get('Description', ''))
+            cont = str(row.get('Container', ''))
+            qty = str(row.get('Qty/Bin', ''))
             loc_str = f"{bus_model}-{row.get('Station No','')}-{base_rack_id}{rack_key}-{row.get('Level','')}{row.get('Cell','')}"
-            row_data = [str(idx + 1), str(row.get('Part No', '')), Paragraph(str(row.get('Description', '')), rl_cell_left_style), str(row.get('Container', '')), str(row.get('Qty/Bin', '')), loc_str]
-            if has_zone: row_data.insert(0, str(row.get('Zone', '')))
+            
+            row_data = [str(s_no), p_no, Paragraph(desc, rl_cell_left_style), cont, qty, loc_str]
+            
+            if has_zone:
+                zone_val = str(row.get('Zone', ''))
+                row_data.insert(0, zone_val)
+                if zone_val == previous_zone and idx > 0:
+                    row_data[0] = "" 
+                else:
+                    if idx > 0:
+                        if current_zone_start < idx + 1: 
+                            table_style_cmds.append(('SPAN', (0, current_zone_start), (0, idx)))
+                    current_zone_start = idx + 1
+                    previous_zone = zone_val
+            
             data_rows.append(row_data)
+            
+        if has_zone and current_zone_start < len(data_rows):
+            table_style_cmds.append(('SPAN', (0, current_zone_start), (0, len(data_rows)-1)))
 
         data_table = Table(data_rows, colWidths=col_widths)
-        data_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F4B084")), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('FONTSIZE', (0,0), (-1,-1), 11)]))
+        data_table.setStyle(TableStyle(table_style_cmds))
         elements.append(data_table)
+        elements.append(Spacer(1, 0.2*cm))
         
-        fixed_logo_img = RLImage(fixed_logo_path, width=4.3*cm, height=1.5*cm) if os.path.exists(fixed_logo_path) else Paragraph("<b>[Logo Missing]</b>", rl_cell_left_style)
-        footer_table = Table([[ [Paragraph(f"<i>Creation Date: {datetime.date.today().strftime('%d-%m-%Y')}</i>", rl_cell_left_style), Spacer(1, 0.2*cm), Paragraph("<b>Verified by:</b>", rl_header_style), Paragraph("Name: ___________________", rl_cell_left_style), Paragraph("Signature: _______________", rl_cell_left_style)], Table([[Paragraph("Designed by:", rl_cell_left_style), fixed_logo_img]], colWidths=[3*cm, 4.5*cm]) ]], colWidths=[20*cm, 7.7*cm])
-        elements.append(Spacer(1, 0.2*cm)); elements.append(footer_table); elements.append(PageBreak())
+        today_date = datetime.date.today().strftime("%d-%m-%Y")
+        
+        # --- FOOTER LOGO LOGIC (Robust handling) ---
+        fixed_logo_img = Paragraph("<b>[Agilomatrix Logo Missing]</b>", rl_cell_left_style)
+        if os.path.exists(fixed_logo_path):
+            try:
+                 fixed_logo_img = RLImage(fixed_logo_path, width=4.3*cm, height=1.5*cm)
+            except:
+                 pass
+        
+        left_content = [
+            Paragraph(f"<i>Creation Date: {today_date}</i>", rl_cell_left_style),
+            Spacer(1, 0.2*cm),
+            Paragraph("<b>Verified by:</b>", ParagraphStyle('BoldFooter', fontName='Helvetica-Bold', fontSize=10, alignment=TA_LEFT)),
+            Paragraph("Name: ___________________", rl_cell_left_style),
+            Paragraph("Signature: _______________", rl_cell_left_style)
+        ]
+
+        designed_by_text = Paragraph("Designed by:", ParagraphStyle('DesignedBy', fontName='Helvetica', fontSize=10, alignment=TA_RIGHT))
+        right_inner_table = Table([[designed_by_text, fixed_logo_img]], colWidths=[3*cm, 4.5*cm])
+        right_inner_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ]))
+
+        footer_table = Table([[left_content, right_inner_table]], colWidths=[20*cm, 7.7*cm])
+        footer_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ]))
+        
+        elements.append(footer_table)
+        elements.append(PageBreak())
         
     doc.build(elements)
     buffer.seek(0)
