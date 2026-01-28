@@ -225,8 +225,12 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                     station_rack_num += 1
                     state['curr_rack_num'] = station_rack_num
                     state['curr_cell_idx'] = 1
-
                 rack_str = f"{state['curr_rack_num']:02d}"
+                
+                # --- NEW LOGIC HERE ---
+                rack_dims = config.get('dims', '')
+                # Format as "Type A (2400x800)"
+                display_rack_name = f"{rack_name} ({rack_dims})" if rack_dims else rack_name
                 part.update({
                     'Rack': base_rack_id, 
                     'Rack No 1st': rack_str[0], 
@@ -235,11 +239,12 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                     'Physical_Cell': f"{state['curr_cell_idx']:02d}",
                     'Station No': station_no, 
                     'Rack Key': rack_str,
-                    'Rack Type': rack_name,
+                    'Rack Type': display_rack_name, # Updated this line
                     'Calculated_Capacity': bins_per_level
                 })
-                final_data.append(part)
-                state['curr_cell_idx'] += 1
+        
+        final_data.append(part)
+        state['curr_cell_idx'] += 1
             
             # Update global station rack counter for next rack type
             station_rack_num = state['curr_rack_num']
