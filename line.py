@@ -417,10 +417,6 @@ def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
 
         qr_data = f"Part No: {part_no}\nDesc: {desc}\nQty/Bin: {qty_bin}\nQty/Veh: {qty_veh}\nStore Loc: {'|'.join(store_loc_raw)}\nLine Loc: {'|'.join(line_loc_raw)}"
         qr_image = generate_qr_code_image(qr_data)
-        
-        content_width = CONTENT_BOX_WIDTH - 0.2*cm
-        station_header_table = Table([[Paragraph("STATION NAME (SHORT)", bin_desc_style), Paragraph(station_name_short, bin_bold_style)]], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.8*cm])
-        station_header_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black), ('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('BACKGROUND', (0,0), (0,0), colors.lightgrey)]))
 
         main_table = Table([["Part No", Paragraph(f"{part_no}", bin_bold_style)], ["Description", Paragraph(desc[:47] + "..." if len(desc) > 50 else desc, bin_desc_style)], ["Qty/Bin", Paragraph(qty_bin, bin_qty_style)]], colWidths=[content_width/3, content_width*2/3], rowHeights=[0.9*cm, 1.0*cm, 0.5*cm])
         main_table.setStyle(TableStyle([('GRID', (0,0),(-1,-1), 1.2, colors.black),('ALIGN', (0,0),(-1,-1), 'CENTER'), ('VALIGN', (0,0),(-1,-1), 'MIDDLE'), ('FONTNAME', (0,0),(0,-1), 'Helvetica'), ('FONTSIZE', (0,0),(0,-1), 11)]))
