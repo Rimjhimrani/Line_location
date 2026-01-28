@@ -98,7 +98,6 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, station_mapping, sta
     for station_no, station_group in df_p.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Allocating Station: {station_no}...")
         
-        # Determine template for this specific station
         template_name = station_mapping.get(str(station_no))
         config = rack_templates[template_name]
         levels = config['levels']
@@ -211,7 +210,7 @@ def generate_rack_labels(df, progress_bar=None):
     summary['Rack'] = summary['Rack No 1st'] + summary['Rack No 2nd']
     
     return buffer, summary[['Station No', 'Rack', 'Labels']]
-    
+
 # --- PDF Generation: Bin Labels ---
 def generate_bin_labels(df, mtm_models, progress_bar=None, status_text=None):
     if not QR_AVAILABLE:
@@ -514,23 +513,20 @@ def generate_rack_list_pdf(df, base_rack_id, top_logo_file, top_logo_w, top_logo
     doc.build(elements)
     buffer.seek(0)
     return buffer, total_groups
-    
-# --- Summary Report Logic ---
-def display_summary_report(df):
+
+# --- Summary Report Generator ---
+def display_summary_report(df, rack_templates):
     if df.empty: return
-    # Calculate unique Rack Numbers (Physical Rack units) per Station per Rack Type
     summary = df.groupby(['Station No', 'Rack Type'])['Rack Key'].nunique().unstack(fill_value=0)
+    summary.columns = [f"{col} ({rack_templates[col]['dim']})" for col in summary.columns]
     summary['TOTAL'] = summary.sum(axis=1)
-    
     total_row = summary.sum(axis=0).to_frame().T
     total_row.index = ['TOTAL']
     final_summary = pd.concat([summary, total_row])
-    
     st.subheader("# SUMMARY")
-    # Apply styling similar to the user's image
     st.dataframe(final_summary.style.background_gradient(cmap='Blues', axis=None).format(precision=0), use_container_width=True)
 
-# --- Main Application UI ---
+# --- Main Application ---
 def main():
     st.title("🏷️ AgiloSmartTag Studio")
     st.markdown("<p style='font-style:italic;'>Designed and Developed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
@@ -538,6 +534,11 @@ def main():
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
+    
+    # Models for MTM Bin Labels
+    m1 = st.sidebar.text_input("Model 1", "7M")
+    m2 = st.sidebar.text_input("Model 2", "9M")
+    m3 = st.sidebar.text_input("Model 3", "12M")
     
     uploaded_file = st.file_uploader("Upload Data (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
@@ -547,30 +548,30 @@ def main():
         
         if req_cols['Container'] and req_cols['Station No']:
             stations = sorted(df[req_cols['Station No']].dropna().unique())
-            
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("1. Rack Type Configuration")
-            num_rack_types = st.sidebar.number_input("Number of Rack Types", 1, 10, 1)
             unique_containers = get_unique_containers(df, req_cols['Container'])
-            
-            rack_templates = {}
-            for i in range(num_rack_types):
-                st.sidebar.markdown(f"#### Rack Type {i+1}")
-                r_name = st.sidebar.text_input(f"Rack Name", f"Rack-{chr(65+i)}", key=f"rn_{i}")
-                r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F','G','H'], default=['A','B','C','D'], key=f"rl_{i}")
-                
-                st.sidebar.caption(f"Bins per shelf (Capacity):")
-                caps = {}
-                for c in unique_containers:
-                    # UPDATED: Capacity min_value=1 (Prevents 0)
-                    caps[c] = st.sidebar.number_input(f"{c} capacity", min_value=1, value=4, key=f"cap_{i}_{c}")
-                rack_templates[r_name] = {'levels': r_levels, 'capacities': caps}
 
             st.sidebar.markdown("---")
-            st.sidebar.subheader("2. Assign Rack to Station")
-            station_mapping = {}
-            for s in stations:
-                station_mapping[str(s)] = st.sidebar.selectbox(f"Station {s}", list(rack_templates.keys()), key=f"map_{s}")
+            st.sidebar.subheader("1. Container Dimensions")
+            for c in unique_containers:
+                st.sidebar.text_input(f"{c} Dim", "600x400", key=f"cdim_{c}")
+
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("2. Rack Type Configuration")
+            num_types = st.sidebar.number_input("Number of Rack Types", 1, 10, 1)
+            rack_templates = {}
+            for i in range(num_types):
+                st.sidebar.markdown(f"**Rack Type {i+1}**")
+                r_name = st.sidebar.text_input(f"Name", f"Rack-{chr(65+i)}", key=f"rn_{i}")
+                r_dim = st.sidebar.text_input(f"Dimension", "2400x800", key=f"rd_{i}")
+                r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
+                caps = {}
+                for c in unique_containers:
+                    caps[c] = st.sidebar.number_input(f"{c} capacity", min_value=1, value=4, key=f"cap_{i}_{c}")
+                rack_templates[r_name] = {'levels': r_levels, 'capacities': caps, 'dim': r_dim}
+
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("3. Station Mapping")
+            station_mapping = {str(s): st.sidebar.selectbox(f"ST-{s}", list(rack_templates.keys()), key=f"map_{s}") for s in stations}
 
             if st.button("🚀 Generate PDF & Summary", type="primary"):
                 status = st.empty()
@@ -578,28 +579,25 @@ def main():
                 df_final = assign_sequential_location_ids(df_assigned)
                 
                 if not df_final.empty:
-                    # Show the requested Summary Table
-                    display_summary_report(df_final)
-                    
-                    st.subheader("📊 Rack Allocation Data")
+                    display_summary_report(df_final, rack_templates)
+                    st.subheader("📊 Outputs")
                     ex_buf = io.BytesIO()
                     df_final.to_excel(ex_buf, index=False)
-                    st.download_button("📥 Download Excel Allocation", ex_buf.getvalue(), "Rack_Allocation.xlsx")
+                    st.download_button("📥 Allocation Excel", ex_buf.getvalue(), "Allocation.xlsx")
                     
                     prog = st.progress(0)
                     if output_type == "Rack Labels":
                         pdf = generate_rack_labels(df_final, prog)
-                        st.download_button("📥 Download Rack Labels PDF", pdf, "Rack_Labels.pdf")
+                        st.download_button("📥 Rack Labels PDF", pdf, "Rack_Labels.pdf")
                     elif output_type == "Bin Labels":
-                        m_list = ["7M", "9M", "12M"] # Default MTM
-                        pdf = generate_bin_labels(df_final, m_list, prog, status)
-                        st.download_button("📥 Download Bin Labels PDF", pdf, "Bin_Labels.pdf")
+                        pdf = generate_bin_labels(df_final, [m1, m2, m3], prog, status)
+                        st.download_button("📥 Bin Labels PDF", pdf, "Bin_Labels.pdf")
                     elif output_type == "Rack List":
-                        pdf = generate_rack_list_pdf(df_final, base_rack_id, None, prog)
-                        st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
+                        pdf = generate_rack_list_pdf(df_final, base_rack_id, prog)
+                        st.download_button("📥 Rack List PDF", pdf, "Rack_List.pdf")
                     prog.empty(); status.empty()
         else:
-            st.error("❌ Required columns (Station Number or Container) not found in the file.")
+            st.error("❌ Missing required columns.")
 
 if __name__ == "__main__":
     main()
