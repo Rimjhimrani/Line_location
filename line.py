@@ -681,17 +681,11 @@ def main():
     st.title("🏷️ AgiloSmartTag Studio")
     st.markdown("<p style='font-style:italic;'>Designed and Developed by Rimjhim Rani | Agilomatrix</p>", unsafe_allow_html=True)
     
+    # Sidebar only for output type selection
     st.sidebar.title("📄 Config")
     output_type = st.sidebar.selectbox("Choose Output Type:", ["Rack Labels", "Bin Labels", "Rack List"])
     
-    model1, model2, model3 = "7M", "9M", "12M"
-    if output_type == "Bin Labels":
-        model1 = st.sidebar.text_input("Model 1", "7M")
-        model2 = st.sidebar.text_input("Model 2", "9M")
-        model3 = st.sidebar.text_input("Model 3", "12M")
-
-    base_rack_id = st.sidebar.text_input("Infrastructure ID", "R")
-    
+    # Main UI configuration
     uploaded_file = st.file_uploader("Upload Your Data Here (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
 
     if uploaded_file:
@@ -700,53 +694,101 @@ def main():
         req_cols = find_required_columns(df)
         
         if req_cols['Container'] and req_cols['Station No']:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Rack Type Configuration")
-            num_rack_types = st.sidebar.number_input("Number of Rack Types", 1, 5, 1)
+            # Main UI Configuration - Everything centered
+            st.markdown("---")
+            
+            # Infrastructure ID and Models in centered columns
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.subheader("📋 Basic Configuration")
+                base_rack_id = st.text_input("Infrastructure ID", "R")
+                
+                if output_type == "Bin Labels":
+                    st.markdown("**MTM Models:**")
+                    mcol1, mcol2, mcol3 = st.columns(3)
+                    model1 = mcol1.text_input("Model 1", "7M", key="m1")
+                    model2 = mcol2.text_input("Model 2", "9M", key="m2")
+                    model3 = mcol3.text_input("Model 3", "12M", key="m3")
+                else:
+                    model1, model2, model3 = "7M", "9M", "12M"
+            
+            st.markdown("---")
+            st.subheader("⚙️ Rack Type Configuration")
+            
+            # Number of rack types centered
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                num_rack_types = st.number_input("Number of Rack Types", 1, 5, 1)
+            
             unique_c = get_unique_containers(df, req_cols['Container'])
             
             rack_templates = {}
             for i in range(num_rack_types):
-                st.sidebar.markdown(f"#### Rack Type {i+1}")
-                r_name = st.sidebar.text_input(f"Rack Name", f"Type {chr(65+i)}", key=f"rn_{i}")
+                st.markdown(f"#### Rack Type {i+1}")
                 
-                # Use columns to center dimension inputs
-                dim_col1, dim_col2, dim_col3 = st.sidebar.columns([1, 2, 1])
-                with dim_col2:
-                    r_dim = st.text_input(f"Dimensions (L x W)", "2400x800", key=f"rd_{i}")
+                # Rack configuration in centered columns
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    r_name = st.text_input(f"Rack Name", f"Type {chr(65+i)}", key=f"rn_{i}")
+                    r_dim = st.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
+                    r_levels = st.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                 
-                r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
+                st.caption(f"**Bins per Shelf for {r_name}** (Enter capacity - 0 to skip):")
                 
-                st.sidebar.caption(f"Bins per Shelf for {r_name} (Enter capacity - 0 to skip):")
+                # Container capacities in columns
                 caps = {}
-                for c in unique_c:
-                    manual_cap = st.sidebar.number_input(f"{c} per shelf", 0, 50, 0, key=f"cap_{i}_{c}")
-                    caps[c] = manual_cap
+                num_containers = len(unique_c)
+                if num_containers <= 3:
+                    cols = st.columns(num_containers)
+                    for idx, c in enumerate(unique_c):
+                        with cols[idx]:
+                            manual_cap = st.number_input(f"{c}", 0, 50, 0, key=f"cap_{i}_{c}")
+                            caps[c] = manual_cap
+                else:
+                    # For more than 3 containers, use rows
+                    for idx in range(0, num_containers, 3):
+                        cols = st.columns(3)
+                        for col_idx, c in enumerate(unique_c[idx:idx+3]):
+                            with cols[col_idx]:
+                                manual_cap = st.number_input(f"{c}", 0, 50, 0, key=f"cap_{i}_{c}")
+                                caps[c] = manual_cap
+                
                 rack_templates[r_name] = {'levels': r_levels, 'capacities': caps, 'dims': r_dim}
+                st.markdown("---")
 
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Container Dimensions")
+            st.subheader("📦 Container Dimensions")
             container_configs = {}
-            for c in unique_c:
-                # Use columns to center container dimension inputs
-                cont_col1, cont_col2, cont_col3 = st.sidebar.columns([1, 2, 1])
-                with cont_col2:
-                    container_configs[c] = {'dims': st.text_input(f"{c} (L x W)", "600x400", key=f"cdim_{c}")}
+            
+            # Container dimensions in centered columns
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                for c in unique_c:
+                    container_configs[c] = {'dims': st.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")}
 
             # Top Logo Configuration for Rack List
             top_logo_file = None
             top_logo_w, top_logo_h = 4.0, 1.5
             if output_type == "Rack List":
-                st.sidebar.markdown("---")
-                st.sidebar.markdown("**📷 Rack List Configuration**")
-                top_logo_file = st.sidebar.file_uploader("Upload Top Logo", type=['png', 'jpg', 'jpeg'])
-                if top_logo_file:
-                    st.sidebar.caption("Logo Dimensions:")
-                    col1, col2 = st.sidebar.columns(2)
-                    top_logo_w = col1.number_input("Width (cm)", 1.0, 8.0, 4.0, 0.5, key="logo_w")
-                    top_logo_h = col2.number_input("Height (cm)", 0.5, 4.0, 1.5, 0.1, key="logo_h")
+                st.markdown("---")
+                st.subheader("📷 Rack List Logo Configuration")
+                
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    top_logo_file = st.file_uploader("Upload Top Logo", type=['png', 'jpg', 'jpeg'])
+                    if top_logo_file:
+                        st.caption("Logo Dimensions:")
+                        lcol1, lcol2 = st.columns(2)
+                        top_logo_w = lcol1.number_input("Width (cm)", 1.0, 8.0, 4.0, 0.5, key="logo_w")
+                        top_logo_h = lcol2.number_input("Height (cm)", 0.5, 4.0, 1.5, 0.1, key="logo_h")
 
-            if st.button("🚀 Generate PDF Labels", type="primary"):
+            st.markdown("---")
+            
+            # Generate button centered
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                generate_btn = st.button("🚀 Generate PDF Labels", type="primary", use_container_width=True)
+            
+            if generate_btn:
                 # Show capacity configuration
                 st.info("📐 **Rack Type & Capacity Configuration:**")
                 
