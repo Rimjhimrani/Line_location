@@ -137,6 +137,25 @@ def calculate_bins_per_level(rack_dims, container_dims):
     
     return max(bins_option1, bins_option2)
 
+def find_rack_type_for_container(container_type, rack_templates, container_configs):
+    """Find which rack type should be used for a given container type"""
+    for rack_name, config in rack_templates.items():
+        # Check if this rack type has capacity for this container
+        manual_capacity = config['capacities'].get(container_type, 0)
+        
+        if manual_capacity > 0:
+            return rack_name, config, manual_capacity
+        
+        # Check auto-calculated capacity
+        container_dims = container_configs.get(container_type, {}).get('dims', '')
+        rack_dims = config.get('dims', '')
+        auto_capacity = calculate_bins_per_level(rack_dims, container_dims)
+        
+        if auto_capacity > 0:
+            return rack_name, config, auto_capacity
+    
+    return None, None, 0
+
 def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text=None):
     req = find_required_columns(df)
     df_p = df.copy()
@@ -146,58 +165,75 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
     
     final_data = []
     if not rack_templates: return pd.DataFrame()
-    template_name = list(rack_templates.keys())[0]
-    config = rack_templates[template_name]
-    levels = config['levels']
-    rack_dims = config['dims']
 
-    # Global rack counter across ALL stations
-    global_rack_num = 1
-
+    # Process each station independently
     for station_no, station_group in df_p.groupby('Station No', sort=True):
         if status_text: status_text.text(f"Allocating Station: {station_no}...")
-        curr_lvl_idx = 0
-        curr_cell_idx = 1
         
+        # Station-specific rack counter (starts from 1 for each station)
+        station_rack_num = 1
+        
+        # Track allocation state per rack type within this station
+        rack_type_states = {}
+        
+        # Process each rack type in order
+        for rack_name in rack_templates.keys():
+            rack_type_states[rack_name] = {
+                'curr_lvl_idx': 0,
+                'curr_cell_idx': 1,
+                'curr_rack_num': station_rack_num
+            }
+        
+        # Group by container type and allocate to appropriate rack types
         for cont_type, parts_group in station_group.groupby('Container', sort=True):
-            # Get container dimensions and calculate actual capacity
-            container_dims = container_configs.get(cont_type, {}).get('dims', '')
-            
-            # Calculate bins per level based on dimensions
-            bins_per_level = calculate_bins_per_level(rack_dims, container_dims)
-            
-            # Also check manual capacity override if it exists
-            manual_capacity = config['capacities'].get(cont_type, None)
-            if manual_capacity is not None and manual_capacity > 0:
-                bins_per_level = manual_capacity
+            # Find which rack type this container should go to
+            rack_name, config, bins_per_level = find_rack_type_for_container(
+                cont_type, rack_templates, container_configs
+            )
             
             # Skip containers with 0 capacity
-            if bins_per_level == 0:
+            if bins_per_level == 0 or rack_name is None:
                 if status_text: 
-                    status_text.text(f"⚠️ Skipping {cont_type} - capacity is 0 (dimensions: {container_dims})")
+                    status_text.text(f"⚠️ Skipping {cont_type} at ST-{station_no} - no suitable rack type found")
                 continue
-                
+            
+            levels = config['levels']
+            state = rack_type_states[rack_name]
+            
             all_parts = parts_group.to_dict('records')
 
             for part in all_parts:
-                if curr_cell_idx > bins_per_level:
-                    curr_cell_idx = 1
-                    curr_lvl_idx += 1
+                if state['curr_cell_idx'] > bins_per_level:
+                    state['curr_cell_idx'] = 1
+                    state['curr_lvl_idx'] += 1
                 
-                if curr_lvl_idx >= len(levels):
-                    curr_lvl_idx = 0
-                    global_rack_num += 1  # Move to next rack globally
-                    curr_cell_idx = 1
+                if state['curr_lvl_idx'] >= len(levels):
+                    state['curr_lvl_idx'] = 0
+                    station_rack_num += 1
+                    state['curr_rack_num'] = station_rack_num
+                    state['curr_cell_idx'] = 1
 
-                rack_str = f"{global_rack_num:02d}"
+                rack_str = f"{state['curr_rack_num']:02d}"
                 part.update({
-                    'Rack': base_rack_id, 'Rack No 1st': rack_str[0], 'Rack No 2nd': rack_str[1],
-                    'Level': levels[curr_lvl_idx], 'Physical_Cell': f"{curr_cell_idx:02d}",
-                    'Station No': station_no, 'Rack Key': rack_str,
-                    'Calculated_Capacity': bins_per_level  # Store for reference
+                    'Rack': base_rack_id, 
+                    'Rack No 1st': rack_str[0], 
+                    'Rack No 2nd': rack_str[1],
+                    'Level': levels[state['curr_lvl_idx']], 
+                    'Physical_Cell': f"{state['curr_cell_idx']:02d}",
+                    'Station No': station_no, 
+                    'Rack Key': rack_str,
+                    'Rack Type': rack_name,
+                    'Calculated_Capacity': bins_per_level
                 })
                 final_data.append(part)
-                curr_cell_idx += 1
+                state['curr_cell_idx'] += 1
+            
+            # Update global station rack counter for next rack type
+            station_rack_num = state['curr_rack_num']
+            if state['curr_cell_idx'] > 1 or state['curr_lvl_idx'] > 0:
+                # Current rack is being used, next rack type should start from next number
+                station_rack_num += 1
+    
     return pd.DataFrame(final_data)
 
 def generate_allocation_summary(df, rack_templates):
@@ -205,23 +241,26 @@ def generate_allocation_summary(df, rack_templates):
     if df.empty:
         return pd.DataFrame()
     
-    # Get rack type name from templates
-    template_name = list(rack_templates.keys())[0] if rack_templates else "Rack-A"
-    
-    # Group by station and rack
     summary_data = []
     
     for station_no in sorted(df['Station No'].unique()):
         station_df = df[df['Station No'] == station_no]
         row_data = {'Station Number': f'ST - {station_no}'}
         
-        # Count racks per station
-        for rack_key in sorted(station_df['Rack Key'].unique()):
-            rack_col_name = f"{template_name} (Dimension value)"
-            if rack_col_name not in row_data:
-                row_data[rack_col_name] = 0
-            row_data[rack_col_name] += 1
+        # Count racks by rack type for this station
+        for rack_name, config in rack_templates.items():
+            rack_type_df = station_df[station_df['Rack Type'] == rack_name] if 'Rack Type' in station_df.columns else pd.DataFrame()
             
+            if not rack_type_df.empty:
+                rack_count = rack_type_df['Rack Key'].nunique()
+                rack_dims = config.get('dims', '')
+                col_name = f"{rack_name} (Dimension {rack_dims})"
+                row_data[col_name] = rack_count if rack_count > 0 else ''
+            else:
+                rack_dims = config.get('dims', '')
+                col_name = f"{rack_name} (Dimension {rack_dims})"
+                row_data[col_name] = ''
+        
         summary_data.append(row_data)
     
     summary_df = pd.DataFrame(summary_data)
@@ -231,7 +270,10 @@ def generate_allocation_summary(df, rack_templates):
         total_row = {'Station Number': 'TOTAL'}
         for col in summary_df.columns:
             if col != 'Station Number':
-                total_row[col] = summary_df[col].sum()
+                # Sum only numeric values
+                numeric_values = pd.to_numeric(summary_df[col], errors='coerce').fillna(0)
+                total = int(numeric_values.sum())
+                total_row[col] = total if total > 0 else ''
         summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
     
     return summary_df
@@ -529,23 +571,28 @@ def main():
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 # Show capacity calculation info
-                st.info("📐 **Capacity Calculation:**")
-                template_name = list(rack_templates.keys())[0]
-                config = rack_templates[template_name]
-                rack_dims = config['dims']
+                st.info("📐 **Capacity Calculation & Rack Type Assignment:**")
                 
                 capacity_info = []
-                for c in unique_c:
-                    container_dims = container_configs.get(c, {}).get('dims', '')
-                    calculated = calculate_bins_per_level(rack_dims, container_dims)
-                    manual = config['capacities'].get(c, 0)
+                for rack_name, config in rack_templates.items():
+                    capacity_info.append(f"### {rack_name} (Dimensions: {config['dims']})")
+                    rack_has_containers = False
                     
-                    if manual > 0:
-                        capacity_info.append(f"• **{c}**: {manual} bins/shelf (Manual Override)")
-                    elif calculated > 0:
-                        capacity_info.append(f"• **{c}**: {calculated} bins/shelf (Auto-calculated from dimensions)")
-                    else:
-                        capacity_info.append(f"• **{c}**: ⚠️ SKIPPED (0 capacity - check dimensions)")
+                    for c in unique_c:
+                        container_dims = container_configs.get(c, {}).get('dims', '')
+                        manual = config['capacities'].get(c, 0)
+                        
+                        if manual > 0:
+                            capacity_info.append(f"  • **{c}**: {manual} bins/shelf (Manual)")
+                            rack_has_containers = True
+                        else:
+                            calculated = calculate_bins_per_level(config['dims'], container_dims)
+                            if calculated > 0:
+                                capacity_info.append(f"  • **{c}**: {calculated} bins/shelf (Auto-calculated)")
+                                rack_has_containers = True
+                    
+                    if not rack_has_containers:
+                        capacity_info.append(f"  • ⚠️ No containers assigned to this rack type")
                 
                 st.markdown("\n".join(capacity_info))
                 st.markdown("---")
