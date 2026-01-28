@@ -709,7 +709,12 @@ def main():
             for i in range(num_rack_types):
                 st.sidebar.markdown(f"#### Rack Type {i+1}")
                 r_name = st.sidebar.text_input(f"Rack Name", f"Type {chr(65+i)}", key=f"rn_{i}")
-                r_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
+                
+                # Use columns to center dimension inputs
+                dim_col1, dim_col2, dim_col3 = st.sidebar.columns([1, 2, 1])
+                with dim_col2:
+                    r_dim = st.text_input(f"Dimensions (L x W)", "2400x800", key=f"rd_{i}")
+                
                 r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                 
                 st.sidebar.caption(f"Bins per Shelf for {r_name} (Enter capacity - 0 to skip):")
@@ -721,7 +726,25 @@ def main():
 
             st.sidebar.markdown("---")
             st.sidebar.subheader("Container Dimensions")
-            container_configs = {c: {'dims': st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")} for c in unique_c}
+            container_configs = {}
+            for c in unique_c:
+                # Use columns to center container dimension inputs
+                cont_col1, cont_col2, cont_col3 = st.sidebar.columns([1, 2, 1])
+                with cont_col2:
+                    container_configs[c] = {'dims': st.text_input(f"{c} (L x W)", "600x400", key=f"cdim_{c}")}
+
+            # Top Logo Configuration for Rack List
+            top_logo_file = None
+            top_logo_w, top_logo_h = 4.0, 1.5
+            if output_type == "Rack List":
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("**📷 Rack List Configuration**")
+                top_logo_file = st.sidebar.file_uploader("Upload Top Logo", type=['png', 'jpg', 'jpeg'])
+                if top_logo_file:
+                    st.sidebar.caption("Logo Dimensions:")
+                    col1, col2 = st.sidebar.columns(2)
+                    top_logo_w = col1.number_input("Width (cm)", 1.0, 8.0, 4.0, 0.5, key="logo_w")
+                    top_logo_h = col2.number_input("Height (cm)", 0.5, 4.0, 1.5, 0.1, key="logo_h")
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
                 # Show capacity configuration
@@ -756,7 +779,7 @@ def main():
                     if not summary_df.empty:
                         st.dataframe(summary_df, use_container_width=True, hide_index=True)
                         
-                        # --- ADD THIS DOWNLOAD BUTTON FOR SUMMARY ---
+                        # Download button for summary
                         summary_excel_buf = io.BytesIO()
                         summary_df.to_excel(summary_excel_buf, index=False)
                         st.download_button(
@@ -792,7 +815,7 @@ def main():
                                 summary_df.to_excel(summary_buf, index=False)
                                 st.download_button("📥 Download Bin Labels Summary", summary_buf.getvalue(), "Bin_Labels_Summary.xlsx")
                     elif output_type == "Rack List":
-                        pdf, _ = generate_rack_list_pdf(df_final, base_rack_id, None, 4.0, 1.5, "Image.png", prog, status)
+                        pdf, _ = generate_rack_list_pdf(df_final, base_rack_id, top_logo_file, top_logo_w, top_logo_h, "Image.png", prog, status)
                         st.download_button("📥 Download Rack List PDF", pdf, "Rack_List.pdf")
                     prog.empty(); status.empty()
         else:
