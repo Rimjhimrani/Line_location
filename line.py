@@ -260,18 +260,19 @@ def generate_allocation_summary(df, rack_templates):
         station_df = df[df['Station No'] == station_no]
         row_data = {'Station Number': f'ST - {station_no}'}
         
-        # Count racks by rack type for this station
         for rack_name, config in rack_templates.items():
-            rack_type_df = station_df[station_df['Rack Type'] == rack_name] if 'Rack Type' in station_df.columns else pd.DataFrame()
+            rack_dims = config.get('dims', '')
+            # Match the new format used in the dataframe
+            display_name = f"{rack_name} ({rack_dims})" if rack_dims else rack_name
             
+            # Filter the dataframe using the new display name
+            rack_type_df = station_df[station_df['Rack Type'] == display_name] if 'Rack Type' in station_df.columns else pd.DataFrame()
+            
+            col_name = display_name
             if not rack_type_df.empty:
                 rack_count = rack_type_df['Rack Key'].nunique()
-                rack_dims = config.get('dims', '')
-                col_name = f"{rack_name} (Dimension {rack_dims})"
                 row_data[col_name] = rack_count if rack_count > 0 else ''
             else:
-                rack_dims = config.get('dims', '')
-                col_name = f"{rack_name} (Dimension {rack_dims})"
                 row_data[col_name] = ''
         
         summary_data.append(row_data)
