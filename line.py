@@ -242,9 +242,8 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                     'Rack Type': display_rack_name, # Updated this line
                     'Calculated_Capacity': bins_per_level
                 })
-        
-        final_data.append(part)
-        state['curr_cell_idx'] += 1
+                final_data.append(part)
+                state['curr_cell_idx'] += 1
             
             # Update global station rack counter for next rack type
             station_rack_num = state['curr_rack_num']
