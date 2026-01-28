@@ -120,6 +120,23 @@ def parse_dimensions(dim_str):
     nums = [int(n) for n in re.findall(r'\d+', dim_str)]
     return (nums[0], nums[1]) if len(nums) >= 2 else (0, 0)
 
+def calculate_bins_per_level(rack_dims, container_dims):
+    """Calculate how many bins can fit in one level of a rack based on dimensions"""
+    rack_l, rack_w = parse_dimensions(rack_dims)
+    cont_l, cont_w = parse_dimensions(container_dims)
+    
+    if rack_l == 0 or rack_w == 0 or cont_l == 0 or cont_w == 0:
+        return 0
+    
+    # Try both orientations and pick the one that fits more bins
+    # Orientation 1: Container length along rack length
+    bins_option1 = (rack_l // cont_l) * (rack_w // cont_w)
+    
+    # Orientation 2: Container length along rack width (rotated 90°)
+    bins_option2 = (rack_l // cont_w) * (rack_w // cont_l)
+    
+    return max(bins_option1, bins_option2)
+
 def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status_text=None):
     req = find_required_columns(df)
     df_p = df.copy()
@@ -132,6 +149,7 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
     template_name = list(rack_templates.keys())[0]
     config = rack_templates[template_name]
     levels = config['levels']
+    rack_dims = config['dims']
 
     # Global rack counter across ALL stations
     global_rack_num = 1
@@ -142,10 +160,21 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
         curr_cell_idx = 1
         
         for cont_type, parts_group in station_group.groupby('Container', sort=True):
-            bins_per_level = config['capacities'].get(cont_type, 0)
+            # Get container dimensions and calculate actual capacity
+            container_dims = container_configs.get(cont_type, {}).get('dims', '')
+            
+            # Calculate bins per level based on dimensions
+            bins_per_level = calculate_bins_per_level(rack_dims, container_dims)
+            
+            # Also check manual capacity override if it exists
+            manual_capacity = config['capacities'].get(cont_type, None)
+            if manual_capacity is not None and manual_capacity > 0:
+                bins_per_level = manual_capacity
             
             # Skip containers with 0 capacity
             if bins_per_level == 0:
+                if status_text: 
+                    status_text.text(f"⚠️ Skipping {cont_type} - capacity is 0 (dimensions: {container_dims})")
                 continue
                 
             all_parts = parts_group.to_dict('records')
@@ -164,7 +193,8 @@ def generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, s
                 part.update({
                     'Rack': base_rack_id, 'Rack No 1st': rack_str[0], 'Rack No 2nd': rack_str[1],
                     'Level': levels[curr_lvl_idx], 'Physical_Cell': f"{curr_cell_idx:02d}",
-                    'Station No': station_no, 'Rack Key': rack_str
+                    'Station No': station_no, 'Rack Key': rack_str,
+                    'Calculated_Capacity': bins_per_level  # Store for reference
                 })
                 final_data.append(part)
                 curr_cell_idx += 1
@@ -486,9 +516,11 @@ def main():
                 r_dim = st.sidebar.text_input(f"Rack Dimensions (L x W)", "2400x800", key=f"rd_{i}")
                 r_levels = st.sidebar.multiselect(f"Levels", ['A','B','C','D','E','F'], default=['A','B','C','D'], key=f"rl_{i}")
                 
-                st.sidebar.caption(f"Bins per Shelf for {r_name}:")
-                # Changed minimum from 1 to 0
-                caps = {c: st.sidebar.number_input(f"{c} per shelf", 0, 50, 4, key=f"cap_{i}_{c}") for c in unique_c}
+                st.sidebar.caption(f"Bins per Shelf for {r_name} (Optional - leave 0 for auto-calculation):")
+                caps = {}
+                for c in unique_c:
+                    manual_cap = st.sidebar.number_input(f"{c} per shelf", 0, 50, 0, key=f"cap_{i}_{c}")
+                    caps[c] = manual_cap
                 rack_templates[r_name] = {'levels': r_levels, 'capacities': caps, 'dims': r_dim}
 
             st.sidebar.markdown("---")
@@ -496,6 +528,28 @@ def main():
             container_configs = {c: {'dims': st.sidebar.text_input(f"{c} Dimensions (L x W)", "600x400", key=f"cdim_{c}")} for c in unique_c}
 
             if st.button("🚀 Generate PDF Labels", type="primary"):
+                # Show capacity calculation info
+                st.info("📐 **Capacity Calculation:**")
+                template_name = list(rack_templates.keys())[0]
+                config = rack_templates[template_name]
+                rack_dims = config['dims']
+                
+                capacity_info = []
+                for c in unique_c:
+                    container_dims = container_configs.get(c, {}).get('dims', '')
+                    calculated = calculate_bins_per_level(rack_dims, container_dims)
+                    manual = config['capacities'].get(c, 0)
+                    
+                    if manual > 0:
+                        capacity_info.append(f"• **{c}**: {manual} bins/shelf (Manual Override)")
+                    elif calculated > 0:
+                        capacity_info.append(f"• **{c}**: {calculated} bins/shelf (Auto-calculated from dimensions)")
+                    else:
+                        capacity_info.append(f"• **{c}**: ⚠️ SKIPPED (0 capacity - check dimensions)")
+                
+                st.markdown("\n".join(capacity_info))
+                st.markdown("---")
+                
                 status = st.empty()
                 df_a = generate_by_rack_type(df, base_rack_id, rack_templates, container_configs, status)
                 df_final = assign_sequential_location_ids(df_a)
