@@ -755,6 +755,16 @@ def main():
                     summary_df = generate_allocation_summary(df_final, rack_templates)
                     if not summary_df.empty:
                         st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                        
+                        # --- ADD THIS DOWNLOAD BUTTON FOR SUMMARY ---
+                        summary_excel_buf = io.BytesIO()
+                        summary_df.to_excel(summary_excel_buf, index=False)
+                        st.download_button(
+                            label="📥 Download Summary Report (Excel)",
+                            data=summary_excel_buf.getvalue(),
+                            file_name="Rack_Allocation_Summary.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     
                     st.subheader("📊 Rack Allocation Data")
                     ex_buf = io.BytesIO()
